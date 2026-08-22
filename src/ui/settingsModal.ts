@@ -4,6 +4,8 @@ import { button, el } from './dom';
 export interface SettingsModalOptions {
   read: () => SettingsData;
   save: (patch: Partial<SettingsData>) => Promise<void>;
+  changeVault?: () => Promise<void>;
+  forgetVault?: () => Promise<void>;
 }
 
 /** 設定画面。値は Vault の .shiorbit/settings.json に保存される。 */
@@ -37,6 +39,21 @@ export class SettingsModal {
         (v) => { patch.dailyTemplate = v; }, '例: Templates/Daily.md（空なら使いません）'),
       text('テンプレートのフォルダ', data.templateFolder, (v) => { patch.templateFolder = v; }),
     );
+
+    if (this.opts.changeVault || this.opts.forgetVault) {
+      const actions = el('div', 'settings-vault-actions');
+      if (this.opts.changeVault) {
+        actions.append(button('フォルダを変更', undefined, () => void this.opts.changeVault?.()));
+      }
+      if (this.opts.forgetVault) {
+        actions.append(button('設定を解除', 'danger', () => void this.opts.forgetVault?.()));
+      }
+      body.append(field(
+        'フォルダ',
+        '設定の解除は記憶したフォルダパスだけを消去します。ノートやフォルダは削除されません。',
+        actions,
+      ));
+    }
 
     const footer = el('div', 'settings-footer');
     footer.append(

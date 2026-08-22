@@ -37,6 +37,8 @@ export interface VaultSource {
   pick: () => Promise<VaultAdapter>;
   restore: (prompt: boolean) => Promise<VaultAdapter | null>;
   hasSaved: () => Promise<boolean>;
+  /** 次回起動用に記憶したフォルダ設定だけを消去する。 */
+  forget?: () => Promise<void>;
   demo: () => Promise<VaultAdapter>;
 }
 
@@ -229,6 +231,7 @@ export class App {
   // ------------------------------------------------------------- workspace
 
   private async openVault(adapter: VaultAdapter): Promise<void> {
+    this.editor?.destroy();
     this.vault?.dispose();
     this.index?.dispose();
     this.localGraph?.destroy();
@@ -248,6 +251,8 @@ export class App {
     this.settingsModal = new SettingsModal({
       read: () => this.settings!.data,
       save: (patch) => this.settings!.update(patch),
+      changeVault: this.source.supported ? () => this.changeVault() : undefined,
+      forgetVault: this.source.forget ? () => this.forgetVault() : undefined,
     });
 
     this.registerCommands();
@@ -272,6 +277,78 @@ export class App {
     if (!vault.caps.realFolder) {
       this.toast('デモモードです。変更は保存されず、リロードで消えます。', true);
     }
+  }
+
+  /** 現在の編集を保存してから、別のフォルダへ安全に切り替える。 */
+  private async changeVault(): Promise<void> {
+    try {
+      // ブラウザではユーザー操作中に picker を呼ぶ必要があるため、先に Promise を作る。
+      const picked = this.source.pick();
+      const adapter = await picked;
+      if (this.dirty) await this.saveNow();
+      if (this.dirty) {
+        this.toast('未保存の変更があるため、フォルダを切り替えませんでした。', true);
+        return;
+      }
+      this.settingsModal?.close();
+      await this.openVault(adapter);
+    } catch (e) {
+      if ((e as { name?: string })?.name === 'AbortError') return;
+      this.toast(errorMessage(e), true);
+    }
+  }
+
+  /** 記憶したパスだけを解除し、実ファイルには触れず welcome へ戻る。 */
+  private async forgetVault(): Promise<void> {
+    if (!this.source.forget) return;
+    const confirmed = window.confirm(
+      '保存したフォルダ設定を解除しますか？\n\nノートやフォルダ自体は削除されません。',
+    );
+    if (!confirmed) return;
+
+    if (this.dirty) await this.saveNow();
+    if (this.dirty) {
+      this.toast('未保存の変更があるため、設定を解除しませんでした。', true);
+      return;
+    }
+
+    try {
+      await this.source.forget();
+      this.leaveVault();
+      this.toast('フォルダ設定を解除しました。ノートやフォルダは削除されていません。');
+    } catch (e) {
+      this.toast(errorMessage(e), true);
+    }
+  }
+
+  private leaveVault(): void {
+    if (this.saveTimer !== null) clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    this.settingsModal?.close();
+    this.graphModal?.close();
+    this.localGraph?.destroy();
+    this.editor?.destroy();
+    this.index?.dispose();
+    this.vault?.dispose();
+
+    this.settingsModal = null;
+    this.graphModal = null;
+    this.localGraph = null;
+    this.editor = null;
+    this.explorer = null;
+    this.searchPane = null;
+    this.tagPane = null;
+    this.unresolvedPane = null;
+    this.backlinksPane = null;
+    this.mobileNav = null;
+    this.mobileToolbar = null;
+    this.els = null;
+    this.settings = null;
+    this.index = null;
+    this.vault = null;
+    this.currentPath = null;
+    this.dirty = false;
+    this.renderWelcome();
   }
 
   private registerCommands(): void {

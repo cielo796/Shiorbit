@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { App, type VaultSource } from '../src/ui/app';
 import { MemoryAdapter, createDemoAdapter } from '../src/adapters/memory';
 
@@ -155,6 +155,58 @@ describe('App の起動', () => {
     filter('両方').click();
     expect(labels()).toEqual(expect.arrayContaining(['note', 'page.html']));
     expect(filter('両方').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('設定からフォルダを変更し、記憶した設定だけを解除できる', async () => {
+    const first = new MemoryAdapter('最初のフォルダ');
+    const second = new MemoryAdapter('変更後のフォルダ');
+    await first.write('first.md', '# 消えない');
+    await second.write('second.html', '<h1>こちらも消えない</h1>');
+    let remembered = true;
+    const forget = vi.fn(async () => { remembered = false; });
+    const pick = vi.fn(async () => second);
+    const vaultSource: VaultSource = {
+      supported: true,
+      unsupportedReason: '',
+      pick,
+      restore: async () => first,
+      hasSaved: async () => remembered,
+      forget,
+      demo: () => createDemoAdapter(),
+    };
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, vaultSource).start();
+
+    [...root.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === '⚙')!.click();
+    const changeButton = [...document.querySelectorAll<HTMLButtonElement>('.settings-modal button')]
+      .find((button) => button.textContent === 'フォルダを変更');
+    const forgetButton = [...document.querySelectorAll<HTMLButtonElement>('.settings-modal button')]
+      .find((button) => button.textContent === '設定を解除');
+    expect(changeButton).toBeDefined();
+    expect(forgetButton).toBeDefined();
+    expect(document.querySelector('.settings-modal')?.textContent).toContain('ノートやフォルダは削除されません');
+
+    changeButton!.click();
+    for (let i = 0; i < 8; i++) await tick();
+    expect(pick).toHaveBeenCalledOnce();
+    expect(root.querySelector('.vault-name')?.textContent).toBe('変更後のフォルダ');
+
+    [...root.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === '⚙')!.click();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    [...document.querySelectorAll<HTMLButtonElement>('.settings-modal button')]
+      .find((button) => button.textContent === '設定を解除')!.click();
+    for (let i = 0; i < 4; i++) await tick();
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(forget).toHaveBeenCalledOnce();
+    expect(root.querySelector('.welcome')).not.toBeNull();
+    expect(root.textContent).not.toContain('前回のフォルダを開く');
+    expect(await first.read('first.md')).toContain('消えない');
+    expect(await second.read('second.html')).toContain('こちらも消えない');
+    confirm.mockRestore();
   });
 
   it('未解決タブにまだ書いていないノートが並ぶ', async () => {

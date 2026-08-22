@@ -12,10 +12,10 @@ import './style.css';
 import { App, type AppDeps, type VaultSource } from './ui/app';
 import { createDemoAdapter } from './adapters/memory';
 import { describeUnsupported, detectPlatform } from './adapters/detect';
-import { hasSavedVault, pickVault, restoreVault } from './adapters/fsa';
+import { forgetVault, hasSavedVault, pickVault, restoreVault } from './adapters/fsa';
 import { createKeyValueStore } from './adapters/idbKv';
 import { openNativeVault } from './adapters/nativeVault';
-import { pickElectronVault, restoreElectronVault } from './adapters/electron';
+import { forgetElectronVault, pickElectronVault, restoreElectronVault } from './adapters/electron';
 
 async function boot(): Promise<void> {
   const root = document.getElementById('app');
@@ -26,7 +26,7 @@ async function boot(): Promise<void> {
 
   // --- デスクトップアプリ (Electron): フォルダを選んでもらい、次回からは自動で開く
   if (platform.kind === 'electron') {
-    const restored = await restoreElectronVault();
+    let restored = await restoreElectronVault();
     let cache = restored?.cache ?? null;
 
     const source: VaultSource = {
@@ -35,11 +35,16 @@ async function boot(): Promise<void> {
       pick: async () => {
         const picked = await pickElectronVault();
         if (!picked) throw Object.assign(new Error('選択されませんでした'), { name: 'AbortError' });
+        restored = picked;
         cache = picked.cache;
         return picked.adapter;
       },
       restore: async () => restored?.adapter ?? null,
       hasSaved: async () => restored !== null,
+      forget: async () => {
+        await forgetElectronVault();
+        restored = null;
+      },
       demo: () => createDemoAdapter(),
     };
 
@@ -71,6 +76,7 @@ async function boot(): Promise<void> {
     pick: () => pickVault(),
     restore: (prompt) => restoreVault({ prompt }),
     hasSaved: () => hasSavedVault(),
+    forget: () => forgetVault(),
     demo: () => createDemoAdapter(),
   };
 

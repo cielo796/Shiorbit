@@ -49,6 +49,8 @@ button.primary { background: var(--accent-dim); border-color: var(--accent-dim);
 button.primary:hover { background: var(--accent); }
 button.ghost { background: transparent; border-color: transparent; color: var(--fg-dim); padding: 4px 8px; }
 button.ghost:hover { background: var(--bg-hover); color: var(--fg); }
+button.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 
 /* ---------------------------------------------------------------- welcome */
 
@@ -498,6 +500,7 @@ mark { background: rgba(167, 139, 250, .3); color: inherit; border-radius: 2px; 
 }
 .settings-input:focus { outline: none; border-color: var(--accent-dim); }
 .settings-checkbox { flex: none; width: 16px; height: 16px; accent-color: var(--accent-dim); }
+.settings-vault-actions { display: flex; flex: none; gap: 8px; }
 .settings-footer {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 12px 18px; border-top: 1px solid var(--border);
@@ -506,6 +509,7 @@ mark { background: rgba(167, 139, 250, .3); color: inherit; border-radius: 2px; 
 @media (max-width: 560px) {
   .settings-row { flex-direction: column; align-items: stretch; gap: 8px; }
   .settings-input { width: 100%; }
+  .settings-vault-actions { flex-wrap: wrap; }
 }
 
 /* -------------------------------------------------------------- グラフ */

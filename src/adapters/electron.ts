@@ -78,3 +78,10 @@ export async function pickElectronVault(): Promise<ElectronVault | null> {
     path: picked,
   };
 }
+
+/** 次回起動用に記憶した Vault のパスだけを消去する。 */
+export async function forgetElectronVault(): Promise<void> {
+  const native = bridge();
+  if (!native) return;
+  await native.forgetVault();
+}
