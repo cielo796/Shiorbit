@@ -35,3 +35,21 @@ export function createHtmlPreviewFrame(): HTMLIFrameElement {
   frame.referrerPolicy = 'no-referrer';
   return frame;
 }
+
+/**
+ * Electron/Chromiumでも確実に再描画されるよう、サニタイズ済み文書を
+ * opaque origin の data URL として読み込む。sandboxにはscript権限を与えない。
+ */
+export function createHtmlPreviewUrl(source: string): string {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(sanitizeHtmlPreview(source))}`;
+}
+
+export function renderHtmlPreview(frame: HTMLIFrameElement, source: string): void {
+  frame.removeAttribute('srcdoc');
+  frame.src = createHtmlPreviewUrl(source);
+}
+
+export function clearHtmlPreview(frame: HTMLIFrameElement): void {
+  frame.removeAttribute('src');
+  frame.srcdoc = '';
+}

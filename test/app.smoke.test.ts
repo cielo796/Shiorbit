@@ -113,8 +113,10 @@ describe('App の起動', () => {
     const preview = root.querySelector<HTMLIFrameElement>('.html-preview')!;
     expect(preview.style.display).toBe('');
     expect(preview.getAttribute('sandbox')).toBe('');
-    expect(preview.srcdoc).toContain('h1{color:red}');
-    expect(preview.srcdoc).not.toMatch(/<script|onclick/i);
+    expect(preview.src).toMatch(/^data:text\/html;charset=utf-8,/);
+    const previewHtml = decodeURIComponent(preview.src.slice(preview.src.indexOf(',') + 1));
+    expect(previewHtml).toContain('h1{color:red}');
+    expect(previewHtml).not.toMatch(/<script|onclick/i);
     const editorShell = preview.previousElementSibling as HTMLElement;
     expect(editorShell.style.display).toBe('none');
 

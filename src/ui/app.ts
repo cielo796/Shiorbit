@@ -28,7 +28,7 @@ import { MobileToolbar } from './mobileToolbar';
 import { MobileNav, type NavTarget } from './mobileNav';
 import { trackKeyboardInset } from './viewport';
 import { button, el, noteLabel } from './dom';
-import { createHtmlPreviewFrame, sanitizeHtmlPreview } from './htmlPreview';
+import { clearHtmlPreview, createHtmlPreviewFrame, renderHtmlPreview } from './htmlPreview';
 
 /** Vault の入手方法。実装は main.ts (合成ルート) から注入される。 */
 export interface VaultSource {
@@ -640,7 +640,7 @@ export class App {
 
   private updateHtmlPreview(source: string): void {
     if (!this.els) return;
-    this.els.htmlPreview.srcdoc = sanitizeHtmlPreview(source);
+    renderHtmlPreview(this.els.htmlPreview, source);
   }
 
   /** グラフのノードをクリックしたとき。未解決ノードはその場で作れる。 */
@@ -868,7 +868,7 @@ export class App {
     this.editor.setDoc('');
     this.editor.dom.style.display = 'none';
     this.els.htmlPreview.style.display = 'none';
-    this.els.htmlPreview.srcdoc = '';
+    clearHtmlPreview(this.els.htmlPreview);
     this.els.htmlModes.style.display = 'none';
     this.mobileToolbar?.setVisible(false);
     this.els.emptyNote.style.display = '';

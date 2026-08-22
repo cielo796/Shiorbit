@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { createHtmlPreviewFrame, sanitizeHtmlPreview } from '../src/ui/htmlPreview';
+import {
+  clearHtmlPreview,
+  createHtmlPreviewFrame,
+  createHtmlPreviewUrl,
+  renderHtmlPreview,
+  sanitizeHtmlPreview,
+} from '../src/ui/htmlPreview';
 
 describe('HTML preview security', () => {
   it('CSSと本文を残し、スクリプト・イベント属性・危険なURLを除去する', () => {
@@ -24,5 +30,23 @@ describe('HTML preview security', () => {
     expect(frame.hasAttribute('sandbox')).toBe(true);
     expect(frame.getAttribute('sandbox')).toBe('');
     expect(frame.referrerPolicy).toBe('no-referrer');
+  });
+
+  it('サニタイズ済みHTMLをdata URLとして読み込み、確実に再描画する', () => {
+    const source = '<style>body{color:red}</style><h1 onclick="alert(1)">Preview</h1><script>bad()</script>';
+    const url = createHtmlPreviewUrl(source);
+    const decoded = decodeURIComponent(url.slice(url.indexOf(',') + 1));
+    expect(url).toMatch(/^data:text\/html;charset=utf-8,/);
+    expect(decoded).toContain('body{color:red}');
+    expect(decoded).toContain('<h1>Preview</h1>');
+    expect(decoded).not.toMatch(/<script|onclick/i);
+
+    const frame = createHtmlPreviewFrame();
+    renderHtmlPreview(frame, source);
+    expect(frame.src).toBe(url);
+    expect(frame.hasAttribute('srcdoc')).toBe(false);
+    clearHtmlPreview(frame);
+    expect(frame.hasAttribute('src')).toBe(false);
+    expect(frame.srcdoc).toBe('');
   });
 });
