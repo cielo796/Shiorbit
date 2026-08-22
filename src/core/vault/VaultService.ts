@@ -1,7 +1,7 @@
 import type { VaultAdapter } from './VaultAdapter';
 import type { Entry, FileEvent, Unsubscribe, VPath } from './types';
 import { ConflictError, isVaultError } from './errors';
-import { isHidden, isMarkdown } from './path';
+import { isHidden, isMarkdown, isSupportedDocument } from './path';
 
 export interface NoteContent {
   path: VPath;
@@ -92,6 +92,18 @@ export class VaultService {
   async listNotes(withStat = false): Promise<Entry[]> {
     const all = await this.listAll(withStat);
     return all.filter((e) => e.kind === 'file' && isMarkdown(e.path));
+  }
+
+  /** エディタで開ける Markdown / HTML ドキュメントを返す。 */
+  async listDocuments(withStat = false): Promise<Entry[]> {
+    const all = await this.listAll(withStat);
+    return all.filter((e) => e.kind === 'file' && isSupportedDocument(e.path));
+  }
+
+  /** ツリー表示用。ディレクトリと、エディタで開けるファイルだけを返す。 */
+  async listDocumentTree(): Promise<Entry[]> {
+    const all = await this.listAll();
+    return all.filter((e) => e.kind === 'dir' || isSupportedDocument(e.path));
   }
 
   async readNote(path: VPath): Promise<NoteContent> {

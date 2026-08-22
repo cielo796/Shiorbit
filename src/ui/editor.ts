@@ -14,7 +14,10 @@ import { HighlightStyle, bracketMatching, syntaxHighlighting } from '@codemirror
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
 import { markdown } from '@codemirror/lang-markdown';
+import { html } from '@codemirror/lang-html';
 import { tags } from '@lezer/highlight';
+
+export type DocumentLanguage = 'markdown' | 'html';
 
 export interface EditorOptions {
   onChange: (text: string) => void;
@@ -73,6 +76,8 @@ export class MarkdownEditor {
   private suppress = false;
 
   private readonly gutterComp = new Compartment();
+  private readonly languageComp = new Compartment();
+  private readonly placeholderComp = new Compartment();
 
   constructor(private readonly opts: EditorOptions) {
     this.dom = document.createElement('div');
@@ -86,11 +91,11 @@ export class MarkdownEditor {
       closeBrackets(),
       highlightSelectionMatches(),
       history(),
-      markdown(),
+      this.languageComp.of(markdown()),
       syntaxHighlighting(markdownHighlight),
       baseTheme,
       EditorView.lineWrapping,
-      placeholder('Markdown で書く…   [[ でノートをリンク'),
+      this.placeholderComp.of(placeholder('Markdown で書く…   [[ でノートをリンク')),
       ...(opts.extensions ?? []),
       keymap.of([
         {
@@ -152,6 +157,17 @@ export class MarkdownEditor {
 
   setLineNumbers(on: boolean): void {
     this.view.dispatch({ effects: this.gutterComp.reconfigure(gutterExtension(on)) });
+  }
+
+  setLanguage(language: DocumentLanguage): void {
+    this.view.dispatch({
+      effects: [
+        this.languageComp.reconfigure(language === 'html' ? html() : markdown()),
+        this.placeholderComp.reconfigure(placeholder(
+          language === 'html' ? 'HTML を編集…' : 'Markdown で書く…   [[ でノートをリンク',
+        )),
+      ],
+    });
   }
 
   /** 拡張へ合図を送る (例: インデックス更新後にリンク装飾を引き直す) */

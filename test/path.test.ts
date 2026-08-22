@@ -5,7 +5,9 @@ import {
   extname,
   isAncestor,
   isHidden,
+  isHtml,
   isMarkdown,
+  isSupportedDocument,
   join,
   normalize,
   segments,
@@ -39,9 +41,13 @@ describe('path', () => {
     expect(extname('.gitignore')).toBe('');
   });
 
-  it('isMarkdown / isHidden / isAncestor', () => {
+  it('対応ドキュメント / isHidden / isAncestor', () => {
     expect(isMarkdown('a/b.MD')).toBe(true);
     expect(isMarkdown('a/b.png')).toBe(false);
+    expect(isHtml('web/index.HTML')).toBe(true);
+    expect(isHtml('web/legacy.HTM')).toBe(true);
+    expect(isSupportedDocument('web/index.html')).toBe(true);
+    expect(isSupportedDocument('image.png')).toBe(false);
     expect(isHidden('.shiorbit/cache/x.json')).toBe(true);
     expect(isHidden('AI/Ollama.md')).toBe(false);
     expect(isAncestor('AI', 'AI/Ollama.md')).toBe(true);

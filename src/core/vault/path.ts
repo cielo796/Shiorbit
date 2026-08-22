@@ -50,6 +50,21 @@ export function isMarkdown(p: VPath): boolean {
   return extname(p).toLowerCase() === '.md';
 }
 
+export function isHtml(p: VPath): boolean {
+  const ext = extname(p).toLowerCase();
+  return ext === '.html' || ext === '.htm';
+}
+
+/** Shiorbit がテキストとして開いて編集できるファイル。 */
+export function isSupportedDocument(p: VPath): boolean {
+  return isMarkdown(p) || isHtml(p);
+}
+
+/** 対応ドキュメントの拡張子だけを取り除く。 */
+export function stripDocumentExtension(p: VPath): string {
+  return isSupportedDocument(p) ? p.slice(0, -extname(p).length) : p;
+}
+
 /** parent が child の祖先か (parent === '' はルートなので常に true) */
 export function isAncestor(parent: VPath, child: VPath): boolean {
   const a = normalize(parent);

@@ -3,7 +3,7 @@ import type { VPath } from '../core/vault/types';
 import type { KeyValueStore } from '../core/storage/KeyValueStore';
 import { VaultService, type VaultEvent } from '../core/vault/VaultService';
 import { ConflictError, isVaultError } from '../core/vault/errors';
-import { basename, dirname, normalize } from '../core/vault/path';
+import { basename, dirname, isHtml, isMarkdown, isSupportedDocument, normalize } from '../core/vault/path';
 import { Indexer } from '../core/index/Indexer';
 import { Settings } from '../core/settings/Settings';
 import { CommandRegistry } from '../core/commands/CommandRegistry';
@@ -366,8 +366,10 @@ export class App {
       onSave: () => void this.saveNow(),
       showLineNumbers: settings.data.showLineNumbers,
       extensions: [
-        livePreview(() => this.settings?.data.livePreview ?? false),
-        wikilinkExtension(this.wikilinks, { conceal: () => this.settings?.data.livePreview ?? false }),
+        livePreview(() => isMarkdown(this.currentPath ?? '') && (this.settings?.data.livePreview ?? false)),
+        wikilinkExtension(this.wikilinks, {
+          conceal: () => isMarkdown(this.currentPath ?? '') && (this.settings?.data.livePreview ?? false),
+        }),
       ],
       extraKeymap: [
         { key: 'Mod-Enter', preventDefault: true, run: followLinkCommand(this.wikilinks) },
@@ -488,7 +490,7 @@ export class App {
   private async refreshTree(): Promise<void> {
     if (!this.vault || !this.explorer) return;
     try {
-      this.explorer.setEntries(await this.vault.listAll());
+      this.explorer.setEntries(await this.vault.listDocumentTree());
       this.explorer.setActive(this.currentPath);
     } catch (e) {
       this.toast(errorMessage(e), true);
@@ -535,6 +537,10 @@ export class App {
 
   private async openNote(path: VPath, offset?: number): Promise<void> {
     if (!this.vault || !this.editor || !this.els) return;
+    if (!isSupportedDocument(path)) {
+      this.toast(`${path} は未対応のファイル形式です。`, true);
+      return;
+    }
     if (this.dirty) await this.saveNow();
 
     try {
@@ -542,6 +548,7 @@ export class App {
       this.currentPath = path;
       this.baseMtime = note.mtime;
       this.dirty = false;
+      this.editor.setLanguage(isHtml(path) ? 'html' : 'markdown');
       this.editor.setDoc(note.text);
       this.editor.dom.style.display = '';
       this.els.emptyNote.style.display = 'none';
@@ -845,16 +852,16 @@ export class App {
           this.toast('このノートは外部でも変更されています。保存時に確認します。', true);
         }
       }
-      await this.index?.updateNote(ev.path);
+      if (isSupportedDocument(ev.path)) await this.index?.updateNote(ev.path);
       return;
     }
     if (ev.type === 'create') {
       await this.refreshTree();
-      await this.index?.updateNote(ev.path);
+      if (isSupportedDocument(ev.path)) await this.index?.updateNote(ev.path);
       return;
     }
     if (ev.type === 'delete') {
-      this.index?.removeNote(ev.path);
+      if (isSupportedDocument(ev.path)) this.index?.removeNote(ev.path);
       await this.refreshTree();
       return;
     }

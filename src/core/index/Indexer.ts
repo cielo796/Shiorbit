@@ -2,7 +2,9 @@ import type { Unsubscribe, VPath } from '../vault/types';
 import type { VaultService } from '../vault/VaultService';
 import type { LinkRef } from '../markdown/wikilink';
 import type { NoteMeta } from '../markdown/scan';
-import { aliasesOf, displayTitle, extractContext, scanNote } from '../markdown/scan';
+import { aliasesOf, displayTitle, extractContext } from '../markdown/scan';
+import { stripDocumentExtension } from '../vault/path';
+import { scanDocument } from './scanDocument';
 import { emptyTables, resolveLink, type ResolveTables } from './resolver';
 import { SearchService, makeSnippet } from './SearchService';
 import { nullStore, type KeyValueStore } from '../storage/KeyValueStore';
@@ -111,7 +113,7 @@ export class Indexer {
    */
   async rebuild(onProgress?: (done: number, total: number) => void, force = false): Promise<void> {
     const started = Date.now();
-    const notes = await this.vault.listNotes(true);
+    const notes = await this.vault.listDocuments(true);
     this.entries.clear();
 
     let toScan: VPath[] = [];
@@ -180,7 +182,7 @@ export class Indexer {
 
   private async load(path: VPath): Promise<void> {
     const note = await this.vault.readNote(path);
-    const meta = scanNote(path, note.text, {
+    const meta = scanDocument(path, note.text, {
       mtime: note.mtime,
       size: note.text.length,
     });
@@ -203,7 +205,7 @@ export class Indexer {
   private reindex(): void {
     this.tables = emptyTables();
     for (const { meta } of this.entries.values()) {
-      const pathKey = meta.path.replace(/\.md$/i, '').toLowerCase();
+      const pathKey = stripDocumentExtension(meta.path).toLowerCase();
       this.tables.byPath.set(pathKey, meta.path);
       push(this.tables.byBasename, meta.basename.toLowerCase(), meta.path);
       for (const alias of aliasesOf(meta)) {

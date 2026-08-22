@@ -120,6 +120,17 @@ describe('Indexer', () => {
     expect(index.suggestions().map((s) => s.basename).sort()).toEqual(['LocalLLM', 'Ollama']);
   });
 
+  it('HTML をタイトル付きでインデックスし、全文検索できる', async () => {
+    await adapter.write(
+      'web/guide.html',
+      '<!doctype html><html><head><title>HTML ガイド</title></head><body><h1>使い方</h1><p>ブラウザ向け文書</p></body></html>',
+    );
+    await index.rebuild();
+
+    expect(index.suggestions().find((item) => item.path === 'web/guide.html')?.title).toBe('HTML ガイド');
+    expect((await index.searchNotes('ブラウザ向け')).map((item) => item.path)).toContain('web/guide.html');
+  });
+
   it('tags を集計する', async () => {
     await adapter.write('Tagged.md', '#ai #llm の話\n');
     await index.updateNote('Tagged.md');

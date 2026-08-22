@@ -37,8 +37,21 @@ describe('VaultService', () => {
 
   it('listNotes が .md だけを返す', async () => {
     await adapter.write('a.md', '');
+    await adapter.write('page.html', '');
     await adapter.write('img.png', '');
     expect((await vault.listNotes()).map((e) => e.path)).toEqual(['a.md']);
+  });
+
+  it('listDocuments が .md / .html / .htm を返す', async () => {
+    await adapter.write('a.md', '');
+    await adapter.write('page.HTML', '');
+    await adapter.write('legacy.htm', '');
+    await adapter.write('img.png', '');
+    expect((await vault.listDocuments()).map((e) => e.path)).toEqual([
+      'a.md',
+      'legacy.htm',
+      'page.HTML',
+    ]);
   });
 
   it('readNote が本文と mtime を返す', async () => {

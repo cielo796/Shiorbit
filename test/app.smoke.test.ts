@@ -28,6 +28,13 @@ function source(): VaultSource {
   };
 }
 
+function sourceWithDemo(adapter: MemoryAdapter): VaultSource {
+  return {
+    ...source(),
+    demo: () => Promise.resolve(adapter),
+  };
+}
+
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 describe('App の起動', () => {
@@ -81,6 +88,28 @@ describe('App の起動', () => {
     expect(right.textContent).toContain('LocalLLM');
     // Ollama から出ている未解決リンク MCP が「リンク先」に並ぶ
     expect(right.querySelector('.outlink.unresolved')?.textContent).toContain('MCP');
+  });
+
+  it('HTML をツリーから開き、Markdown の記法を隠さず編集表示する', async () => {
+    const adapter = new MemoryAdapter('HTML');
+    await adapter.write(
+      'web/page.html',
+      '<!doctype html>\n<html><head><title>Sample</title></head><body>[[そのまま表示]]</body></html>',
+    );
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    const row = [...root.querySelectorAll('.tree .row .label')].find((node) => node.textContent === 'page.html');
+    expect(row).toBeDefined();
+    (row!.parentElement as HTMLElement).click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    expect(root.querySelector('.main-title')?.textContent).toBe('web/page.html');
+    expect(root.querySelector('.cm-content')?.textContent).toContain('[[そのまま表示]]');
   });
 
   it('未解決タブにまだ書いていないノートが並ぶ', async () => {
