@@ -161,7 +161,7 @@ export class App {
     const wrap = el('div', 'welcome');
 
     const h1 = el('h1');
-    h1.append('Obi', Object.assign(document.createElement('span'), { textContent: 'disan' }));
+    h1.append('Shior', Object.assign(document.createElement('span'), { textContent: 'bit' }));
     wrap.append(h1);
 
     if (busy) {
@@ -173,8 +173,8 @@ export class App {
     if (this.source.supported) {
       wrap.append(
         el('p', undefined,
-          'フォルダを選ぶと、その中の .md ファイルをそのまま編集できます。' +
-          'ノートの実体は普通の Markdown ファイルなので、いつでも他のアプリで開けます。'),
+          'フォルダを選ぶと、その中の .md / .html / .htm ファイルをそのまま編集できます。' +
+          'ファイルは通常形式のままなので、いつでも他のアプリで開けます。'),
       );
       const row = el('div', 'row');
       row.append(

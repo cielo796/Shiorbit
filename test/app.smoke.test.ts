@@ -112,6 +112,36 @@ describe('App の起動', () => {
     expect(root.querySelector('.cm-content')?.textContent).toContain('[[そのまま表示]]');
   });
 
+  it('ファイルツリーをMarkdown・HTML・両方で切り替えられる', async () => {
+    const adapter = new MemoryAdapter('Filter');
+    await adapter.write('notes/note.md', '# Markdown');
+    await adapter.write('web/page.html', '<h1>HTML</h1>');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+
+    [...root.querySelectorAll('button')].find((button) => button.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    const labels = (): string[] => [...root.querySelectorAll('.tree .row .label')]
+      .map((node) => node.textContent ?? '');
+    const filter = (name: string): HTMLButtonElement => [...root.querySelectorAll<HTMLButtonElement>('.file-filter')]
+      .find((button) => button.textContent === name)!;
+
+    expect(labels()).toEqual(expect.arrayContaining(['note', 'page.html']));
+    filter('MD').click();
+    expect(labels()).toContain('note');
+    expect(labels()).not.toContain('page.html');
+
+    filter('HTML').click();
+    expect(labels()).not.toContain('note');
+    expect(labels()).toContain('page.html');
+
+    filter('両方').click();
+    expect(labels()).toEqual(expect.arrayContaining(['note', 'page.html']));
+    expect(filter('両方').getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('未解決タブにまだ書いていないノートが並ぶ', async () => {
     const root = document.createElement('div');
     document.body.append(root);

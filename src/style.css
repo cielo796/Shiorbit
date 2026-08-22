@@ -104,6 +104,30 @@ button.ghost:hover { background: var(--bg-hover); color: var(--fg); }
 .sidebar-body { flex: 1; overflow: auto; padding: 6px 0 20px; min-height: 0; }
 .pane-host { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 
+.explorer-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.file-filters {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.file-filter {
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg-faint);
+  font-size: 11.5px;
+}
+.file-filter:hover { background: var(--bg-hover); color: var(--fg-dim); }
+.file-filter.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .sidebar-tabs { display: flex; border-bottom: 1px solid var(--border); }
 .sidebar-tabs .tab {
   flex: 1; background: transparent; border: none; border-radius: 0;
