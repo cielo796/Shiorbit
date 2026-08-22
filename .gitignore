@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.DS_Store
+*.local
+.vite/
+release/
+build/*
+!build/icon-source.png
+!build/icon.png
+!build/icon.ico
+ios/
+android/
+.shiorbit/
+*.log

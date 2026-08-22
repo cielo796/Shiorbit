@@ -1,0 +1,29 @@
+appId: app.shiorbit
+productName: Shiorbit
+copyright: Shiorbit
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  # 署名しない（自己利用のため）。SmartScreen の警告は出る。
+  signAndEditExecutable: true
+
+nsis:
+  # 管理者権限を求めないユーザー単位インストール
+  perMachine: false
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Shiorbit
+  deleteAppDataOnUninstall: false
