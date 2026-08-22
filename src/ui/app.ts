@@ -28,6 +28,7 @@ import { MobileToolbar } from './mobileToolbar';
 import { MobileNav, type NavTarget } from './mobileNav';
 import { trackKeyboardInset } from './viewport';
 import { button, el, noteLabel } from './dom';
+import { createHtmlPreviewFrame, sanitizeHtmlPreview } from './htmlPreview';
 
 /** Vault の入手方法。実装は main.ts (合成ルート) から注入される。 */
 export interface VaultSource {
@@ -46,6 +47,7 @@ export interface AppDeps {
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type Tab = 'files' | 'search' | 'tags' | 'unresolved';
+type HtmlViewMode = 'preview' | 'source';
 
 const SAVE_DEBOUNCE_MS = 500;
 const POLL_INTERVAL_MS = 5000;
@@ -68,12 +70,14 @@ export class App {
   private readonly palette: CommandPalette;
   private settingsModal: SettingsModal | null = null;
   private mobileNav: MobileNav | null = null;
+  private mobileToolbar: MobileToolbar | null = null;
 
   private currentPath: VPath | null = null;
   private baseMtime = 0;
   private dirty = false;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private currentTab: Tab = 'files';
+  private htmlViewMode: HtmlViewMode = 'preview';
 
   private els: {
     workspace: HTMLElement;
@@ -84,6 +88,9 @@ export class App {
     statusPath: HTMLElement;
     statusSave: HTMLElement;
     statusIndex: HTMLElement;
+    htmlPreview: HTMLIFrameElement;
+    htmlModes: HTMLElement;
+    htmlModeButtons: Map<HtmlViewMode, HTMLButtonElement>;
   } | null = null;
 
   private readonly toastHost: HTMLElement;
@@ -349,9 +356,21 @@ export class App {
     const main = el('div', 'main');
     const mainHead = el('div', 'main-head');
     const title = el('div', 'main-title', 'ノートを選択してください');
+    const htmlModes = el('div', 'html-view-modes');
+    const htmlModeButtons = new Map<HtmlViewMode, HTMLButtonElement>();
+    const addHtmlMode = (mode: HtmlViewMode, label: string): void => {
+      const modeButton = button(label, 'html-view-mode', () => this.setHtmlViewMode(mode));
+      modeButton.setAttribute('aria-pressed', 'false');
+      htmlModeButtons.set(mode, modeButton);
+      htmlModes.append(modeButton);
+    };
+    addHtmlMode('preview', 'プレビュー');
+    addHtmlMode('source', 'ソース');
+    htmlModes.style.display = 'none';
     mainHead.append(
       button('☰', 'ghost menu-btn', () => workspace.classList.toggle('drawer-open')),
       title,
+      htmlModes,
       button('⌕', 'ghost', () => this.switcher.open()),
       button('⋯', 'ghost', () => this.palette.open()),
       button('◍', 'ghost', () => this.openGraph()),
@@ -377,9 +396,12 @@ export class App {
     });
     this.editor = editor;
     editor.dom.style.display = 'none';
-    editorHost.append(emptyNote, editor.dom);
+    const htmlPreview = createHtmlPreviewFrame();
+    htmlPreview.style.display = 'none';
+    editorHost.append(emptyNote, editor.dom, htmlPreview);
 
     const toolbar = new MobileToolbar({ editor: () => this.editor });
+    this.mobileToolbar = toolbar;
     main.append(mainHead, editorHost, toolbar.dom);
 
     // --- 右ペイン（ローカルグラフ + バックリンク）
@@ -424,7 +446,19 @@ export class App {
     workspace.append(sidebar, main, rightbar, statusbar, this.mobileNav.dom, scrim);
     this.root.append(workspace);
 
-    this.els = { workspace, title, emptyNote, paneHost, tabs: tabButtons, statusPath, statusSave, statusIndex };
+    this.els = {
+      workspace,
+      title,
+      emptyNote,
+      paneHost,
+      tabs: tabButtons,
+      statusPath,
+      statusSave,
+      statusIndex,
+      htmlPreview,
+      htmlModes,
+      htmlModeButtons,
+    };
     this.setTab('files');
     this.setSaveState('idle');
   }
@@ -550,7 +584,6 @@ export class App {
       this.dirty = false;
       this.editor.setLanguage(isHtml(path) ? 'html' : 'markdown');
       this.editor.setDoc(note.text);
-      this.editor.dom.style.display = '';
       this.els.emptyNote.style.display = 'none';
       this.els.title.textContent = path;
       this.els.statusPath.textContent = path;
@@ -559,8 +592,15 @@ export class App {
       this.els.workspace.classList.remove('drawer-open');
       this.mobileNav?.setActive(null);
       this.onIndexChanged();
-      if (offset !== undefined) this.editor.revealOffset(offset);
-      else this.editor.focus();
+      if (isHtml(path)) {
+        this.htmlViewMode = 'preview';
+        this.updateHtmlPreview(note.text);
+      }
+      this.updateDocumentView();
+      if (!isHtml(path)) {
+        if (offset !== undefined) this.editor.revealOffset(offset);
+        else this.editor.focus();
+      }
     } catch (e) {
       this.toast(errorMessage(e), true);
     }
@@ -568,6 +608,39 @@ export class App {
 
   private openGraph(): void {
     this.graphModal?.open();
+  }
+
+  private setHtmlViewMode(mode: HtmlViewMode): void {
+    if (!isHtml(this.currentPath ?? '')) return;
+    this.htmlViewMode = mode;
+    if (mode === 'preview' && this.editor) this.updateHtmlPreview(this.editor.getDoc());
+    this.updateDocumentView();
+    if (mode === 'source') this.editor?.focus();
+  }
+
+  private updateDocumentView(): void {
+    const els = this.els;
+    const editor = this.editor;
+    if (!els || !editor) return;
+    const hasDocument = this.currentPath !== null;
+    const html = isHtml(this.currentPath ?? '');
+    const preview = html && this.htmlViewMode === 'preview';
+
+    els.htmlModes.style.display = html ? '' : 'none';
+    els.htmlPreview.style.display = preview ? '' : 'none';
+    editor.dom.style.display = hasDocument && !preview ? '' : 'none';
+    this.mobileToolbar?.setVisible(hasDocument && isMarkdown(this.currentPath ?? ''));
+
+    for (const [mode, modeButton] of els.htmlModeButtons) {
+      const active = mode === this.htmlViewMode;
+      modeButton.classList.toggle('active', active);
+      modeButton.setAttribute('aria-pressed', String(active));
+    }
+  }
+
+  private updateHtmlPreview(source: string): void {
+    if (!this.els) return;
+    this.els.htmlPreview.srcdoc = sanitizeHtmlPreview(source);
   }
 
   /** グラフのノードをクリックしたとき。未解決ノードはその場で作れる。 */
@@ -695,6 +768,7 @@ export class App {
   }
 
   private onEdit(): void {
+    if (isHtml(this.currentPath ?? '') && this.editor) this.updateHtmlPreview(this.editor.getDoc());
     this.dirty = true;
     this.setSaveState('dirty');
     if (this.saveTimer !== null) clearTimeout(this.saveTimer);
@@ -752,6 +826,7 @@ export class App {
         const backup = await vault.saveConflictCopy(path, mine);
         const fresh = await vault.readNote(path);
         this.editor.setDoc(fresh.text);
+        if (isHtml(path)) this.updateHtmlPreview(fresh.text);
         this.baseMtime = fresh.mtime;
         this.dirty = false;
         this.setSaveState('saved');
@@ -792,6 +867,10 @@ export class App {
     this.dirty = false;
     this.editor.setDoc('');
     this.editor.dom.style.display = 'none';
+    this.els.htmlPreview.style.display = 'none';
+    this.els.htmlPreview.srcdoc = '';
+    this.els.htmlModes.style.display = 'none';
+    this.mobileToolbar?.setVisible(false);
     this.els.emptyNote.style.display = '';
     this.els.title.textContent = 'ノートを選択してください';
     this.els.statusPath.textContent = '';
@@ -846,6 +925,7 @@ export class App {
         if (!this.dirty) {
           const fresh = await this.vault!.readNote(ev.path);
           this.editor?.setDoc(fresh.text);
+          if (isHtml(ev.path)) this.updateHtmlPreview(fresh.text);
           this.baseMtime = fresh.mtime;
           this.toast('外部の変更を読み込みました。');
         } else {

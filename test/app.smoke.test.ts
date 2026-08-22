@@ -90,11 +90,12 @@ describe('App の起動', () => {
     expect(right.querySelector('.outlink.unresolved')?.textContent).toContain('MCP');
   });
 
-  it('HTML をツリーから開き、Markdown の記法を隠さず編集表示する', async () => {
+  it('HTML は安全なプレビューを既定表示し、ソースへ切り替えられる', async () => {
     const adapter = new MemoryAdapter('HTML');
     await adapter.write(
       'web/page.html',
-      '<!doctype html>\n<html><head><title>Sample</title></head><body>[[そのまま表示]]</body></html>',
+      '<!doctype html>\n<html><head><title>Sample</title><style>h1{color:red}</style></head>' +
+        '<body onclick="alert(1)"><h1>Preview</h1><script>window.pwned=true</script></body></html>',
     );
     const root = document.createElement('div');
     document.body.append(root);
@@ -109,7 +110,19 @@ describe('App の起動', () => {
     for (let i = 0; i < 10; i++) await tick();
 
     expect(root.querySelector('.main-title')?.textContent).toBe('web/page.html');
-    expect(root.querySelector('.cm-content')?.textContent).toContain('[[そのまま表示]]');
+    const preview = root.querySelector<HTMLIFrameElement>('.html-preview')!;
+    expect(preview.style.display).toBe('');
+    expect(preview.getAttribute('sandbox')).toBe('');
+    expect(preview.srcdoc).toContain('h1{color:red}');
+    expect(preview.srcdoc).not.toMatch(/<script|onclick/i);
+    const editorShell = preview.previousElementSibling as HTMLElement;
+    expect(editorShell.style.display).toBe('none');
+
+    const sourceMode = [...root.querySelectorAll<HTMLButtonElement>('.html-view-mode')]
+      .find((mode) => mode.textContent === 'ソース')!;
+    sourceMode.click();
+    expect(editorShell.style.display).toBe('');
+    expect(root.querySelector('.cm-content')?.textContent).toContain('<h1>Preview</h1>');
   });
 
   it('ファイルツリーをMarkdown・HTML・両方で切り替えられる', async () => {
