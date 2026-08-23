@@ -22,6 +22,8 @@ export type DocumentLanguage = 'markdown' | 'html';
 export interface EditorOptions {
   onChange: (text: string) => void;
   onSave: () => void;
+  /** カーソル移動やスクロール位置をアウトライン等へ通知する。 */
+  onPositionChange?: (offset: number) => void;
   /** wikilinkExtension などを差し込む */
   extensions?: Extension[];
   extraKeymap?: KeyBinding[];
@@ -117,6 +119,12 @@ export class MarkdownEditor {
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !this.suppress) {
           this.opts.onChange(update.state.doc.toString());
+        }
+        if (!this.suppress && (update.selectionSet || update.viewportChanged)) {
+          const offset = update.selectionSet
+            ? update.state.selection.main.head
+            : update.view.viewport.from;
+          this.opts.onPositionChange?.(offset);
         }
       }),
     ];

@@ -90,6 +90,27 @@ describe('App の起動', () => {
     expect(right.querySelector('.outlink.unresolved')?.textContent).toContain('MCP');
   });
 
+  it('アウトラインに見出しが並び、クリックすると該当位置へ移動する', async () => {
+    const adapter = new MemoryAdapter('Outline');
+    await adapter.write('long.md', '# 概要\n本文\n\n## 詳細\n詳しい本文\n\n### 補足\n追記');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+
+    [...root.querySelectorAll('button')].find((button) => button.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+    const row = [...root.querySelectorAll('.tree .row .label')].find((node) => node.textContent === 'long');
+    (row!.parentElement as HTMLElement).click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    const headings = [...root.querySelectorAll<HTMLElement>('.outline-item')];
+    expect(headings.map((heading) => heading.textContent)).toEqual(['概要', '詳細', '補足']);
+    headings[1]!.click();
+    for (let i = 0; i < 2; i++) await tick();
+    expect(root.querySelector('.outline-item.active')?.textContent).toBe('詳細');
+    expect(root.querySelector('.cm-activeLine')?.textContent).toContain('## 詳細');
+  });
+
   it('HTML は安全なプレビューを既定表示し、ソースへ切り替えられる', async () => {
     const adapter = new MemoryAdapter('HTML');
     await adapter.write(
@@ -119,6 +140,13 @@ describe('App の起動', () => {
     expect(previewHtml).not.toMatch(/<script|onclick/i);
     const editorShell = preview.previousElementSibling as HTMLElement;
     expect(editorShell.style.display).toBe('none');
+
+    const htmlHeading = [...root.querySelectorAll<HTMLElement>('.outline-item')]
+      .find((heading) => heading.textContent === 'Preview');
+    expect(htmlHeading).toBeDefined();
+    htmlHeading!.click();
+    expect(editorShell.style.display).toBe('');
+    expect(root.querySelector('.outline-item.active')?.textContent).toBe('Preview');
 
     const sourceMode = [...root.querySelectorAll<HTMLButtonElement>('.html-view-mode')]
       .find((mode) => mode.textContent === 'ソース')!;
@@ -207,6 +235,35 @@ describe('App の起動', () => {
     expect(await first.read('first.md')).toContain('消えない');
     expect(await second.read('second.html')).toContain('こちらも消えない');
     confirm.mockRestore();
+  });
+
+  it('ノート名の変更前に影響範囲を表示し、リンクを追従させる', async () => {
+    const adapter = new MemoryAdapter('Rename UI');
+    await adapter.write('AI/Ollama.md', '# Ollama');
+    await adapter.write('AI/Guide.md', '[[Ollama]] と [[AI/Ollama|別名]]');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((button) => button.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    const ollama = [...root.querySelectorAll('.tree .row')]
+      .find((row) => row.querySelector('.label')?.textContent === 'Ollama')!;
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('AI/Llama.md');
+    ollama.querySelector<HTMLButtonElement>('.rename')!.click();
+    for (let i = 0; i < 5; i++) await tick();
+
+    const modal = document.querySelector('.rename-modal')!;
+    expect(modal.textContent).toContain('1 件のノートの 2 か所を書き換えます');
+    expect(modal.textContent).toContain('AI/Guide.md');
+    [...modal.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === '変更する')!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    expect(await adapter.exists('AI/Ollama.md')).toBe(false);
+    expect(await adapter.read('AI/Guide.md')).toBe('[[Llama]] と [[AI/Llama|別名]]');
+    expect(root.textContent).toContain('Llama');
+    prompt.mockRestore();
   });
 
   it('未解決タブにまだ書いていないノートが並ぶ', async () => {

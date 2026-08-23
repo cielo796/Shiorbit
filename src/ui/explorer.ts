@@ -5,6 +5,7 @@ export type ExplorerFilter = 'all' | 'markdown' | 'html';
 
 export interface ExplorerOptions {
   onOpen: (path: VPath) => void;
+  onRename: (path: VPath) => void;
   onDelete: (path: VPath) => void;
 }
 
@@ -172,8 +173,20 @@ export class Explorer {
 
     row.append(caret, icon, label);
 
+    if (node.kind === 'file') {
+      const rename = document.createElement('button');
+      rename.className = 'ghost row-action rename';
+      rename.textContent = '✎';
+      rename.title = '名前を変更';
+      rename.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.opts.onRename(node.path);
+      });
+      row.append(rename);
+    }
+
     const del = document.createElement('button');
-    del.className = 'ghost del';
+    del.className = 'ghost row-action del';
     del.textContent = '✕';
     del.title = '削除';
     del.addEventListener('click', (e) => {

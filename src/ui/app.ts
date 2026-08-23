@@ -11,7 +11,6 @@ import { dailyPath } from '../core/notes/date';
 import { applyTemplate } from '../core/notes/template';
 import { MarkdownEditor } from './editor';
 import { Explorer } from './explorer';
-import { BacklinksPane } from './backlinksPane';
 import { UnresolvedPane } from './unresolvedPane';
 import { SearchPane } from './searchPane';
 import { TagPane } from './tagPane';
@@ -19,8 +18,10 @@ import { QuickSwitcher } from './quickSwitcher';
 import { CommandPalette } from './commandPalette';
 import { SettingsModal } from './settingsModal';
 import { ModalList } from './modalList';
-import { LocalGraphPane } from './graph/localGraphPane';
 import { GraphModal } from './graph/graphModal';
+import { RightPane } from './rightPane';
+import { registerAppCommands } from './appCommands';
+import { RenameController } from './renameController';
 import { livePreview } from './livePreview';
 import { refreshPreview } from './previewState';
 import { followLinkCommand, wikilinkExtension, type WikilinkProvider } from './wikilinkExtension';
@@ -65,11 +66,11 @@ export class App {
   private searchPane: SearchPane | null = null;
   private tagPane: TagPane | null = null;
   private unresolvedPane: UnresolvedPane | null = null;
-  private backlinksPane: BacklinksPane | null = null;
-  private localGraph: LocalGraphPane | null = null;
+  private rightPane: RightPane | null = null;
   private graphModal: GraphModal | null = null;
   private readonly switcher: QuickSwitcher;
   private readonly palette: CommandPalette;
+  private readonly renamer: RenameController;
   private settingsModal: SettingsModal | null = null;
   private mobileNav: MobileNav | null = null;
   private mobileToolbar: MobileToolbar | null = null;
@@ -130,6 +131,35 @@ export class App {
       onCreate: (name) => void this.createFromName(name),
     });
     this.palette = new CommandPalette(this.commands);
+    this.renamer = new RenameController({
+      vault: () => this.vault,
+      index: () => this.index,
+      currentPath: () => this.currentPath,
+      ensureSaved: async () => {
+        if (this.dirty) await this.saveNow();
+        return !this.dirty;
+      },
+      refreshTree: () => this.refreshTree(),
+      openNote: (path) => this.openNote(path),
+      notify: (message, isError) => this.toast(message, isError),
+    });
+
+    registerAppCommands(this.commands, {
+      openQuickSwitcher: () => this.switcher.open(),
+      openSearch: () => { this.openSidebar(); this.setTab('search'); },
+      createNote: () => this.newNote(),
+      openDaily: () => this.openDaily(),
+      insertTemplate: () => this.insertTemplate(),
+      save: () => this.saveNow(),
+      toggleLivePreview: () => this.settings?.update({ livePreview: !this.settings.data.livePreview }),
+      toggleTheme: () => this.settings?.update({ theme: this.settings.data.theme === 'dark' ? 'light' : 'dark' }),
+      openGraph: () => this.openGraph(),
+      openSettings: () => this.settingsModal?.open(),
+      reindex: () => this.reindexAll(true),
+      renameCurrentNote: () => this.currentPath ? this.renamer.rename(this.currentPath) : undefined,
+      deleteCurrentNote: () => this.currentPath ? this.deleteEntry(this.currentPath) : undefined,
+      hasCurrentNote: () => this.currentPath !== null,
+    });
 
     window.addEventListener('focus', () => void this.vault?.poll());
     document.addEventListener('visibilitychange', () => {
@@ -234,7 +264,7 @@ export class App {
     this.editor?.destroy();
     this.vault?.dispose();
     this.index?.dispose();
-    this.localGraph?.destroy();
+    this.rightPane?.destroy();
     this.graphModal?.close();
 
     const vault = new VaultService(adapter);
@@ -255,7 +285,6 @@ export class App {
       forgetVault: this.source.forget ? () => this.forgetVault() : undefined,
     });
 
-    this.registerCommands();
     this.renderWorkspace();
     await this.refreshTree();
 
@@ -326,20 +355,19 @@ export class App {
     this.saveTimer = null;
     this.settingsModal?.close();
     this.graphModal?.close();
-    this.localGraph?.destroy();
+    this.rightPane?.destroy();
     this.editor?.destroy();
     this.index?.dispose();
     this.vault?.dispose();
 
     this.settingsModal = null;
     this.graphModal = null;
-    this.localGraph = null;
+    this.rightPane = null;
     this.editor = null;
     this.explorer = null;
     this.searchPane = null;
     this.tagPane = null;
     this.unresolvedPane = null;
-    this.backlinksPane = null;
     this.mobileNav = null;
     this.mobileToolbar = null;
     this.els = null;
@@ -349,36 +377,6 @@ export class App {
     this.currentPath = null;
     this.dirty = false;
     this.renderWelcome();
-  }
-
-  private registerCommands(): void {
-    this.commands.register(
-      { id: 'quick-switcher', name: 'ノートを開く（クイックスイッチャ）', hotkey: 'Ctrl+O', run: () => this.switcher.open() },
-      { id: 'search', name: '全文検索', hotkey: 'Ctrl+Shift+F', run: () => { this.openSidebar(); this.setTab('search'); } },
-      { id: 'new-note', name: '新しいノートを作る', run: () => void this.newNote() },
-      { id: 'daily-note', name: '今日のノートを開く', hotkey: 'Ctrl+Shift+D', run: () => void this.openDaily() },
-      { id: 'insert-template', name: 'テンプレートを挿入', run: () => this.insertTemplate(), available: () => this.currentPath !== null },
-      { id: 'save', name: '保存する', hotkey: 'Ctrl+S', run: () => void this.saveNow() },
-      {
-        id: 'toggle-live-preview',
-        name: 'Live Preview を切り替える',
-        run: () => void this.settings?.update({ livePreview: !this.settings.data.livePreview }),
-      },
-      {
-        id: 'toggle-theme',
-        name: 'テーマを切り替える（ダーク / ライト）',
-        run: () => void this.settings?.update({ theme: this.settings.data.theme === 'dark' ? 'light' : 'dark' }),
-      },
-      { id: 'graph', name: 'グラフを開く', hotkey: 'Ctrl+G', run: () => this.openGraph() },
-      { id: 'settings', name: '設定を開く', run: () => this.settingsModal?.open() },
-      { id: 'reindex', name: 'インデックスを作り直す', run: () => void this.reindexAll(true) },
-      {
-        id: 'delete-note',
-        name: 'このノートを削除する',
-        available: () => this.currentPath !== null,
-        run: () => void this.deleteEntry(this.currentPath!),
-      },
-    );
   }
 
   private renderWorkspace(): void {
@@ -415,6 +413,7 @@ export class App {
 
     this.explorer = new Explorer({
       onOpen: (p) => void this.openNote(p),
+      onRename: (p) => void this.renamer.rename(p),
       onDelete: (p) => void this.deleteEntry(p),
     });
     this.searchPane = new SearchPane({
@@ -460,6 +459,7 @@ export class App {
     const editor = new MarkdownEditor({
       onChange: () => this.onEdit(),
       onSave: () => void this.saveNow(),
+      onPositionChange: (offset) => this.rightPane?.setCurrentOffset(offset),
       showLineNumbers: settings.data.showLineNumbers,
       extensions: [
         livePreview(() => isMarkdown(this.currentPath ?? '') && (this.settings?.data.livePreview ?? false)),
@@ -481,23 +481,20 @@ export class App {
     this.mobileToolbar = toolbar;
     main.append(mainHead, editorHost, toolbar.dom);
 
-    // --- 右ペイン（ローカルグラフ + バックリンク）
-    this.backlinksPane = new BacklinksPane({
+    // --- 右ペイン（アウトライン + ローカルグラフ + バックリンク）
+    this.rightPane = new RightPane({
       onOpen: (p, offset) => void this.openNote(p, offset),
       onCreate: (name) => void this.createFromName(name),
-    });
-    this.localGraph = new LocalGraphPane({
-      onSelect: (id, kind, label) => void this.onGraphSelect(id, kind, label),
-      currentId: () => this.currentPath,
-      onExpand: () => this.openGraph(),
+      onReveal: (offset) => this.revealDocumentOffset(offset),
+      onGraphSelect: (id, kind, label) => void this.onGraphSelect(id, kind, label),
+      currentPath: () => this.currentPath,
+      onExpandGraph: () => this.openGraph(),
     });
     this.graphModal = new GraphModal({
       getInput: () => this.index?.graphInput() ?? [],
       currentId: () => this.currentPath,
       onSelect: (id, kind, label) => void this.onGraphSelect(id, kind, label),
     });
-    const rightbar = el('aside', 'rightbar');
-    rightbar.append(this.localGraph.dom, this.backlinksPane.dom);
 
     // --- ステータスバー
     const statusbar = el('div', 'statusbar');
@@ -520,7 +517,7 @@ export class App {
 
     this.mobileNav = new MobileNav({ onSelect: (target) => this.onMobileNav(target) });
 
-    workspace.append(sidebar, main, rightbar, statusbar, this.mobileNav.dom, scrim);
+    workspace.append(sidebar, main, this.rightPane.dom, statusbar, this.mobileNav.dom, scrim);
     this.root.append(workspace);
 
     this.els = {
@@ -595,7 +592,7 @@ export class App {
     this.applyTheme();
     this.editor?.setLineNumbers(this.settings?.data.showLineNumbers ?? true);
     this.editor?.applyEffects([refreshPreview.of(null)]);
-    this.localGraph?.refreshTheme();
+    this.rightPane?.refreshTheme();
   }
 
   private async refreshTree(): Promise<void> {
@@ -632,14 +629,8 @@ export class App {
     this.unresolvedPane?.setGroups(index.unresolved());
     this.tagPane?.setTags(index.tags());
     this.searchPane?.refresh();
-    this.localGraph?.update(index.graphInput());
+    this.rightPane?.update(index, this.currentPath);
     this.graphModal?.refresh();
-
-    if (this.currentPath) {
-      this.backlinksPane?.setNote(this.currentPath, index.backlinks(this.currentPath), index.outgoing(this.currentPath));
-    } else {
-      this.backlinksPane?.setNote(null, [], []);
-    }
 
     this.editor?.applyEffects([refreshPreview.of(null)]);
   }
@@ -661,6 +652,7 @@ export class App {
       this.dirty = false;
       this.editor.setLanguage(isHtml(path) ? 'html' : 'markdown');
       this.editor.setDoc(note.text);
+      this.rightPane?.setCurrentOffset(offset ?? 0);
       this.els.emptyNote.style.display = 'none';
       this.els.title.textContent = path;
       this.els.statusPath.textContent = path;
@@ -674,10 +666,8 @@ export class App {
         this.updateHtmlPreview(note.text);
       }
       this.updateDocumentView();
-      if (!isHtml(path)) {
-        if (offset !== undefined) this.editor.revealOffset(offset);
-        else this.editor.focus();
-      }
+      if (offset !== undefined) this.revealDocumentOffset(offset);
+      else if (!isHtml(path)) this.editor.focus();
     } catch (e) {
       this.toast(errorMessage(e), true);
     }
@@ -685,6 +675,14 @@ export class App {
 
   private openGraph(): void {
     this.graphModal?.open();
+  }
+
+  private revealDocumentOffset(offset: number): void {
+    if (isHtml(this.currentPath ?? '') && this.htmlViewMode === 'preview') {
+      this.setHtmlViewMode('source');
+    }
+    this.rightPane?.setCurrentOffset(offset);
+    this.editor?.revealOffset(offset);
   }
 
   private setHtmlViewMode(mode: HtmlViewMode): void {
@@ -951,7 +949,7 @@ export class App {
     this.els.emptyNote.style.display = '';
     this.els.title.textContent = 'ノートを選択してください';
     this.els.statusPath.textContent = '';
-    this.backlinksPane?.setNote(null, [], []);
+    if (this.index) this.rightPane?.update(this.index, null);
     this.setSaveState('idle');
   }
 
