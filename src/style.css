@@ -513,6 +513,24 @@ mark { background: rgba(167, 139, 250, .3); color: inherit; border-radius: 2px; 
   .settings-vault-actions { flex-wrap: wrap; }
 }
 
+/* -------------------------------------------------------------- ダイアログ */
+
+.dialog { max-width: 460px; }
+.dialog-body { overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; }
+.dialog-label { font-size: 12px; color: var(--fg-dim); }
+.dialog-input { width: 100%; font-size: 13.5px; padding: 7px 9px; }
+.dialog-hint, .dialog-preview { font-size: 11.5px; color: var(--fg-faint); line-height: 1.6; }
+.dialog-preview { color: var(--fg-dim); overflow-wrap: anywhere; }
+.dialog-error { font-size: 11.5px; color: var(--danger); line-height: 1.6; }
+.dialog-error:empty { display: none; }
+.dialog-message { margin: 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.dialog-message:empty { display: none; }
+.dialog-kinds { display: flex; gap: 6px; }
+.dialog-kind { flex: 1; font-size: 12.5px; padding: 6px 4px; }
+.dialog-kind.active {
+  background: var(--bg-active); border-color: var(--accent-dim); color: var(--fg);
+}
+
 /* ---------------------------------------------------------- アウトライン */
 
 .pane-outline { max-height: 240px; display: flex; flex-direction: column; }

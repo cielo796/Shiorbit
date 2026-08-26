@@ -4,6 +4,8 @@ import { dirname, extname, isSupportedDocument, join, normalize } from '../core/
 import type { VaultService } from '../core/vault/VaultService';
 import type { VPath } from '../core/vault/types';
 import { confirmRename } from './renameDialog';
+import { promptDialog } from './dialog';
+import { invalidNameReason } from '../core/notes/newDocument';
 
 export interface RenameControllerOptions {
   vault: () => VaultService | null;
@@ -28,7 +30,14 @@ export class RenameController {
       return;
     }
 
-    const input = window.prompt('新しいノート名（フォルダ付きも可）', from);
+    const input = await promptDialog({
+      title: 'ノート名を変更',
+      label: '新しい名前',
+      hint: '拡張子を省くと元のまま（スラッシュでフォルダも移せます）。',
+      value: from,
+      confirmLabel: '次へ',
+      validate: invalidNameReason,
+    });
     if (input === null) return;
     const trimmed = input.trim();
     if (trimmed === '') return;

@@ -223,12 +223,19 @@ describe('App の起動', () => {
 
     [...root.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent === '⚙')!.click();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    // Electron には window.confirm/prompt が無いため、確認はアプリ内ダイアログで行う。
+    const confirm = vi.spyOn(window, 'confirm');
     [...document.querySelectorAll<HTMLButtonElement>('.settings-modal button')]
       .find((button) => button.textContent === '設定を解除')!.click();
     for (let i = 0; i < 4; i++) await tick();
 
-    expect(confirm).toHaveBeenCalledOnce();
+    const confirmDialog = document.querySelector('.confirm-dialog')!;
+    expect(confirmDialog.textContent).toContain('ノートやフォルダ自体は削除されません');
+    [...confirmDialog.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === '解除する')!.click();
+    for (let i = 0; i < 4; i++) await tick();
+
+    expect(confirm).not.toHaveBeenCalled();
     expect(forget).toHaveBeenCalledOnce();
     expect(root.querySelector('.welcome')).not.toBeNull();
     expect(root.textContent).not.toContain('前回のフォルダを開く');
@@ -249,10 +256,20 @@ describe('App の起動', () => {
 
     const ollama = [...root.querySelectorAll('.tree .row')]
       .find((row) => row.querySelector('.label')?.textContent === 'Ollama')!;
-    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('AI/Llama.md');
+    const prompt = vi.spyOn(window, 'prompt');
     ollama.querySelector<HTMLButtonElement>('.rename')!.click();
     for (let i = 0; i < 5; i++) await tick();
 
+    const promptModal = document.querySelector('.prompt-dialog')!;
+    const nameInput = promptModal.querySelector<HTMLInputElement>('.dialog-input')!;
+    expect(nameInput.value).toBe('AI/Ollama.md');
+    nameInput.value = 'AI/Llama.md';
+    nameInput.dispatchEvent(new Event('input'));
+    [...promptModal.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === '次へ')!.click();
+    for (let i = 0; i < 5; i++) await tick();
+
+    expect(prompt).not.toHaveBeenCalled();
     const modal = document.querySelector('.rename-modal')!;
     expect(modal.textContent).toContain('1 件のノートの 2 か所を書き換えます');
     expect(modal.textContent).toContain('AI/Guide.md');
@@ -446,5 +463,57 @@ describe('App の起動', () => {
     tagsBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     for (let i = 0; i < 4; i++) await tick();
     expect(workspace.classList.contains('drawer-open')).toBe(false);
+  });
+  it('新規作成ダイアログで HTML とフォルダを作れる', async () => {
+    const adapter = new MemoryAdapter('New UI');
+    await adapter.write('AI/Ollama.md', '# Ollama');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    // Electron には window.prompt が無いので、新規作成もアプリ内ダイアログで完結する。
+    const prompt = vi.spyOn(window, 'prompt');
+    [...root.querySelectorAll<HTMLButtonElement>('.sidebar-head button')]
+      .find((b) => b.textContent === '+')!.click();
+    for (let i = 0; i < 3; i++) await tick();
+    expect(prompt).not.toHaveBeenCalled();
+
+    const dialog = document.querySelector('.new-document-dialog')!;
+    const input = dialog.querySelector<HTMLInputElement>('.dialog-input')!;
+    [...dialog.querySelectorAll<HTMLButtonElement>('.dialog-kind')]
+      .find((b) => b.textContent === 'HTML')!.click();
+    input.value = 'Guide';
+    input.dispatchEvent(new Event('input'));
+    expect(dialog.querySelector('.dialog-preview')?.textContent).toBe('作成先: Guide.html');
+
+    [...dialog.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent === '作成')!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    expect(await adapter.read('Guide.html')).toContain('<!doctype html>');
+    expect(document.querySelector('.new-document-dialog')).toBeNull();
+
+    // フォルダ行の ＋ は、そのフォルダを作成先にする。
+    const aiRow = [...root.querySelectorAll('.tree .row')]
+      .find((row) => row.querySelector('.label')?.textContent === 'AI')!;
+    aiRow.querySelector<HTMLButtonElement>('.create')!.click();
+    for (let i = 0; i < 3; i++) await tick();
+
+    const folderDialog = document.querySelector('.new-document-dialog')!;
+    const folderInput = folderDialog.querySelector<HTMLInputElement>('.dialog-input')!;
+    [...folderDialog.querySelectorAll<HTMLButtonElement>('.dialog-kind')]
+      .find((b) => b.textContent === 'フォルダ')!.click();
+    folderInput.value = 'LLM';
+    folderInput.dispatchEvent(new Event('input'));
+    expect(folderDialog.querySelector('.dialog-preview')?.textContent).toBe('作成先: AI/LLM');
+    [...folderDialog.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent === '作成')!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    // 空のフォルダもツリーに出る。
+    expect([...root.querySelectorAll('.tree .label')].some((l) => l.textContent === 'LLM')).toBe(true);
+    prompt.mockRestore();
   });
 });

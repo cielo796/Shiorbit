@@ -9,6 +9,7 @@ import { Settings } from '../core/settings/Settings';
 import { CommandRegistry } from '../core/commands/CommandRegistry';
 import { dailyPath } from '../core/notes/date';
 import { applyTemplate } from '../core/notes/template';
+import { newDocumentBody } from '../core/notes/newDocument';
 import { MarkdownEditor } from './editor';
 import { Explorer } from './explorer';
 import { UnresolvedPane } from './unresolvedPane';
@@ -30,6 +31,8 @@ import { MobileNav, type NavTarget } from './mobileNav';
 import { trackKeyboardInset } from './viewport';
 import { button, el, noteLabel } from './dom';
 import { clearHtmlPreview, createHtmlPreviewFrame, renderHtmlPreview } from './htmlPreview';
+import { confirmDialog } from './dialog';
+import { askNewDocument } from './newDocumentDialog';
 
 /** Vault の入手方法。実装は main.ts (合成ルート) から注入される。 */
 export interface VaultSource {
@@ -147,7 +150,7 @@ export class App {
     registerAppCommands(this.commands, {
       openQuickSwitcher: () => this.switcher.open(),
       openSearch: () => { this.openSidebar(); this.setTab('search'); },
-      createNote: () => this.newNote(),
+      createNote: () => this.newDocument(),
       openDaily: () => this.openDaily(),
       insertTemplate: () => this.insertTemplate(),
       save: () => this.saveNow(),
@@ -330,9 +333,11 @@ export class App {
   /** 記憶したパスだけを解除し、実ファイルには触れず welcome へ戻る。 */
   private async forgetVault(): Promise<void> {
     if (!this.source.forget) return;
-    const confirmed = window.confirm(
-      '保存したフォルダ設定を解除しますか？\n\nノートやフォルダ自体は削除されません。',
-    );
+    const confirmed = await confirmDialog({
+      title: 'フォルダ設定の解除',
+      message: '保存したフォルダ設定を解除しますか？\n\nノートやフォルダ自体は削除されません。',
+      confirmLabel: '解除する',
+    });
     if (!confirmed) return;
 
     if (this.dirty) await this.saveNow();
@@ -392,7 +397,7 @@ export class App {
     vaultName.title = vault.name;
     head.append(
       vaultName,
-      button('+', 'ghost', () => void this.newNote()),
+      button('+', 'ghost', () => void this.newDocument()),
       button('⚙', 'ghost', () => this.settingsModal?.open()),
     );
 
@@ -415,6 +420,7 @@ export class App {
       onOpen: (p) => void this.openNote(p),
       onRename: (p) => void this.renamer.rename(p),
       onDelete: (p) => void this.deleteEntry(p),
+      onCreateIn: (dir) => void this.newDocument(dir),
     });
     this.searchPane = new SearchPane({
       search: (q) => this.index?.searchNotes(q) ?? Promise.resolve([]),
@@ -883,11 +889,14 @@ export class App {
     const vault = this.vault;
     if (!vault || !this.editor) return;
 
-    const keepMine = window.confirm(
-      `「${path}」は他の場所で変更されています。\n\n` +
-        `［OK］自分の変更を保存する（外部の内容を .conflict ファイルに退避）\n` +
-        `［キャンセル］外部の内容を読み込む（自分の変更を .conflict ファイルに退避）`,
-    );
+    const keepMine = await confirmDialog({
+      title: '変更が競合しています',
+      message:
+        `「${path}」は他の場所で変更されています。\n` +
+        'どちらを選んでも、もう一方は .conflict ファイルとして残ります。',
+      confirmLabel: '自分の変更を保存',
+      cancelLabel: '外部の内容を読み込む',
+    });
 
     try {
       if (keepMine) {
@@ -915,16 +924,56 @@ export class App {
     }
   }
 
-  private async newNote(): Promise<void> {
-    const input = window.prompt('新しいノートの名前（フォルダ付きも可: AI/Ollama）', '無題');
-    if (input === null) return;
-    await this.createFromName(input);
+  /**
+   * 種別（Markdown / HTML / フォルダ）を選んで新規作成する。
+   *
+   * baseDir を省略すると、開いているノートと同じフォルダに作る
+   * （リンク解決が「近いものを優先」なので、関連ノートが自然にまとまる）。
+   */
+  private async newDocument(baseDir?: VPath): Promise<void> {
+    const vault = this.vault;
+    if (!vault) return;
+
+    const dir = baseDir ?? (this.currentPath ? dirname(this.currentPath) : '');
+    const plan = await askNewDocument({ baseDir: dir });
+    if (plan === null) return;
+
+    try {
+      if (plan.kind === 'folder') {
+        await vault.mkdir(plan.path);
+        await this.refreshTree();
+        this.toast(`${plan.path} を作成しました。`);
+        return;
+      }
+
+      if (await vault.exists(plan.path)) {
+        this.toast(`${plan.path} は既にあります。`, true);
+        await this.openNote(plan.path);
+        return;
+      }
+
+      await vault.createNote(plan.path, newDocumentBody(plan.kind, basename(plan.path, true)));
+      await this.refreshTree();
+      await this.index?.updateNote(plan.path);
+      await this.openNote(plan.path);
+      this.toast(`${plan.path} を作成しました。`);
+    } catch (e) {
+      this.toast(errorMessage(e), true);
+    }
   }
 
   private async deleteEntry(path: VPath): Promise<void> {
     const vault = this.vault;
     if (!vault) return;
-    if (!window.confirm(`「${path}」を削除します。よろしいですか？`)) return;
+    const ok = await confirmDialog({
+      title: '削除',
+      message: `「${path}」を削除します。
+
+この操作は取り消せません。`,
+      confirmLabel: '削除する',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await vault.remove(path);
       this.index?.removeNote(path);

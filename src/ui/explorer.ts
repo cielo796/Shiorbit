@@ -7,6 +7,8 @@ export interface ExplorerOptions {
   onOpen: (path: VPath) => void;
   onRename: (path: VPath) => void;
   onDelete: (path: VPath) => void;
+  /** そのフォルダを作成先として新規作成する。 */
+  onCreateIn: (dir: VPath) => void;
 }
 
 interface Node {
@@ -86,12 +88,20 @@ export class Explorer {
       return node;
     };
 
+    // 空のフォルダも作った直後に見えるよう、ディレクトリは実体として登録する。
+    for (const e of this.entries) {
+      if (e.kind === 'dir') ensureDir(e.path);
+    }
+
     for (const e of this.entries) {
       if (e.kind === 'dir' || !this.matchesFilter(e.path)) continue;
       const node: Node = { path: e.path, name: e.name, kind: 'file', children: [] };
       const parent = ensureDir(dirname(e.path));
       (parent ? parent.children : roots).push(node);
     }
+
+    // 形式で絞り込んでいる間は、該当ファイルを持たないフォルダを畳んで隠す。
+    if (this.filter !== 'all') prune(roots);
 
     const sort = (nodes: Node[]): void => {
       nodes.sort((a, b) => {
@@ -173,6 +183,18 @@ export class Explorer {
 
     row.append(caret, icon, label);
 
+    if (node.kind === 'dir') {
+      const create = document.createElement('button');
+      create.className = 'ghost row-action create';
+      create.textContent = '＋';
+      create.title = 'このフォルダの中に新規作成';
+      create.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.opts.onCreateIn(node.path);
+      });
+      row.append(create);
+    }
+
     if (node.kind === 'file') {
       const rename = document.createElement('button');
       rename.className = 'ghost row-action rename';
@@ -198,6 +220,16 @@ export class Explorer {
     li.append(row);
     if (node.children.length > 0) li.append(this.renderList(node.children));
     return li;
+  }
+}
+
+/** 子孫にファイルを1つも持たないフォルダを取り除く。 */
+function prune(nodes: Node[]): void {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const node = nodes[i]!;
+    if (node.kind !== 'dir') continue;
+    prune(node.children);
+    if (node.children.length === 0) nodes.splice(i, 1);
   }
 }
 
