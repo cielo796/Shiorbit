@@ -516,4 +516,62 @@ describe('App の起動', () => {
     expect([...root.querySelectorAll('.tree .label')].some((l) => l.textContent === 'LLM')).toBe(true);
     prompt.mockRestore();
   });
+  it('Ctrl と +／0 で表示倍率が変わり、設定に残る', async () => {
+    const adapter = new MemoryAdapter('Zoom UI');
+    await adapter.write('note.md', '# note');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue('--ui-font-size')).toBe('14px');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '=', ctrlKey: true }));
+    for (let i = 0; i < 6; i++) await tick();
+    expect(style.getPropertyValue('--ui-font-size')).toBe('15.4px');
+    expect(style.getPropertyValue('--editor-font-size')).toBe('16px');
+    expect(await adapter.read('.shiorbit/settings.json')).toContain('"zoom": 1.1');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '0', ctrlKey: true }));
+    for (let i = 0; i < 6; i++) await tick();
+    expect(style.getPropertyValue('--ui-font-size')).toBe('14px');
+  });
+
+  it('設定は保存前に反映され、閉じると元へ戻る', async () => {
+    const adapter = new MemoryAdapter('Settings UI');
+    await adapter.write('note.md', '# note');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    [...root.querySelectorAll<HTMLButtonElement>('.sidebar-head button')]
+      .find((b) => b.textContent === '⚙')!.click();
+    const modal = document.querySelector('.settings-modal')!;
+    const editorSize = [...modal.querySelectorAll<HTMLInputElement>('input[type="number"]')]
+      .find((input) => input.getAttribute('aria-label') === 'エディタの文字サイズ')!;
+
+    // 範囲外は反映せず、理由を出す。
+    editorSize.value = '900';
+    editorSize.dispatchEvent(new Event('input'));
+    for (let i = 0; i < 3; i++) await tick();
+    expect(modal.textContent).toContain('の範囲で入れてください');
+    expect(document.documentElement.style.getPropertyValue('--editor-font-size')).toBe('14.5px');
+
+    // 範囲内はその場で反映する（保存はまだ）。
+    editorSize.value = '20';
+    editorSize.dispatchEvent(new Event('input'));
+    for (let i = 0; i < 3; i++) await tick();
+    expect(document.documentElement.style.getPropertyValue('--editor-font-size')).toBe('20px');
+    expect(await adapter.exists('.shiorbit/settings.json')).toBe(false);
+
+    // Esc で閉じるとプレビューは捨てられる。
+    modal.parentElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    for (let i = 0; i < 4; i++) await tick();
+    expect(document.querySelector('.settings-modal')).toBeNull();
+    expect(document.documentElement.style.getPropertyValue('--editor-font-size')).toBe('14.5px');
+  });
 });

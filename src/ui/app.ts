@@ -5,7 +5,7 @@ import { VaultService, type VaultEvent } from '../core/vault/VaultService';
 import { ConflictError, isVaultError } from '../core/vault/errors';
 import { basename, dirname, isHtml, isMarkdown, isSupportedDocument, normalize } from '../core/vault/path';
 import { Indexer } from '../core/index/Indexer';
-import { Settings } from '../core/settings/Settings';
+import { LIMITS, Settings, clamp } from '../core/settings/Settings';
 import { CommandRegistry } from '../core/commands/CommandRegistry';
 import { dailyPath } from '../core/notes/date';
 import { applyTemplate } from '../core/notes/template';
@@ -55,8 +55,6 @@ type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type Tab = 'files' | 'search' | 'tags' | 'unresolved';
 type HtmlViewMode = 'preview' | 'source';
 
-const SAVE_DEBOUNCE_MS = 500;
-const POLL_INTERVAL_MS = 5000;
 
 export class App {
   private vault: VaultService | null = null;
@@ -84,6 +82,8 @@ export class App {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private currentTab: Tab = 'files';
   private htmlViewMode: HtmlViewMode = 'preview';
+  /** startWatching をやり直すのは間隔が変わったときだけにする。 */
+  private watchInterval = 0;
 
   private els: {
     workspace: HTMLElement;
@@ -158,6 +158,9 @@ export class App {
       toggleTheme: () => this.settings?.update({ theme: this.settings.data.theme === 'dark' ? 'light' : 'dark' }),
       openGraph: () => this.openGraph(),
       openSettings: () => this.settingsModal?.open(),
+      zoomIn: () => this.changeZoom(LIMITS.zoom.step),
+      zoomOut: () => this.changeZoom(-LIMITS.zoom.step),
+      zoomReset: () => this.changeZoom(0),
       reindex: () => this.reindexAll(true),
       renameCurrentNote: () => this.currentPath ? this.renamer.rename(this.currentPath) : undefined,
       deleteCurrentNote: () => this.currentPath ? this.deleteEntry(this.currentPath) : undefined,
@@ -179,6 +182,7 @@ export class App {
       void this.index?.flush();
     });
     window.addEventListener('keydown', (e) => this.onGlobalKey(e));
+    window.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     trackKeyboardInset();
   }
 
@@ -279,11 +283,14 @@ export class App {
 
     await this.settings.load();
     this.applyTheme();
+    this.applyZoom();
     this.settings.onChange(() => this.applySettings());
 
     this.settingsModal = new SettingsModal({
       read: () => this.settings!.data,
       save: (patch) => this.settings!.update(patch),
+      preview: (patch) => this.settings!.preview(patch),
+      discardPreview: () => this.settings!.discardPreview(),
       changeVault: this.source.supported ? () => this.changeVault() : undefined,
       forgetVault: this.source.forget ? () => this.forgetVault() : undefined,
     });
@@ -304,7 +311,8 @@ export class App {
     }
 
     vault.on((ev) => void this.onVaultEvent(ev));
-    vault.startWatching({ intervalMs: POLL_INTERVAL_MS });
+    this.watchInterval = this.settings.data.pollInterval;
+    vault.startWatching({ intervalMs: this.watchInterval });
 
     if (!vault.caps.realFolder) {
       this.toast('デモモードです。変更は保存されず、リロードで消えます。', true);
@@ -596,9 +604,28 @@ export class App {
 
   private applySettings(): void {
     this.applyTheme();
+    this.applyZoom();
     this.editor?.setLineNumbers(this.settings?.data.showLineNumbers ?? true);
     this.editor?.applyEffects([refreshPreview.of(null)]);
     this.rightPane?.refreshTheme();
+    this.applyWatchInterval();
+    if (isHtml(this.currentPath ?? '') && this.editor) this.updateHtmlPreview(this.editor.getDoc());
+  }
+
+  /** 文字サイズは CSS 変数に流し込む。個別のセレクタを触らずに全体へ効く。 */
+  private applyZoom(): void {
+    const data = this.settings?.data;
+    if (!data) return;
+    const style = document.documentElement.style;
+    style.setProperty('--ui-font-size', `${round(data.uiFontSize * data.zoom)}px`);
+    style.setProperty('--editor-font-size', `${round(data.editorFontSize * data.zoom)}px`);
+  }
+
+  private applyWatchInterval(): void {
+    const interval = this.settings?.data.pollInterval;
+    if (!this.vault || interval === undefined || interval === this.watchInterval) return;
+    this.watchInterval = interval;
+    this.vault.startWatching({ intervalMs: interval });
   }
 
   private async refreshTree(): Promise<void> {
@@ -668,7 +695,7 @@ export class App {
       this.mobileNav?.setActive(null);
       this.onIndexChanged();
       if (isHtml(path)) {
-        this.htmlViewMode = 'preview';
+        this.htmlViewMode = this.settings?.data.htmlDefaultView ?? 'preview';
         this.updateHtmlPreview(note.text);
       }
       this.updateDocumentView();
@@ -721,7 +748,7 @@ export class App {
 
   private updateHtmlPreview(source: string): void {
     if (!this.els) return;
-    renderHtmlPreview(this.els.htmlPreview, source);
+    renderHtmlPreview(this.els.htmlPreview, source, { zoom: this.settings?.data.zoom ?? 1 });
   }
 
   /** グラフのノードをクリックしたとき。未解決ノードはその場で作れる。 */
@@ -853,7 +880,7 @@ export class App {
     this.dirty = true;
     this.setSaveState('dirty');
     if (this.saveTimer !== null) clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => void this.saveNow(), SAVE_DEBOUNCE_MS);
+    this.saveTimer = setTimeout(() => void this.saveNow(), this.settings?.data.autoSaveDelay ?? 500);
   }
 
   private async saveNow(): Promise<void> {
@@ -1032,7 +1059,39 @@ export class App {
     if (!e.shiftKey && (key === 'o' || key === 'p')) {
       e.preventDefault();
       this.switcher.open();
+      return;
     }
+
+    // 拡大・縮小。ブラウザ自身のズームより先に受け取り、設定として保存する。
+    if (key === '=' || key === '+' || key === ';') {
+      e.preventDefault();
+      void this.changeZoom(LIMITS.zoom.step);
+    } else if (key === '-' || key === '_') {
+      e.preventDefault();
+      void this.changeZoom(-LIMITS.zoom.step);
+    } else if (key === '0') {
+      e.preventDefault();
+      void this.changeZoom(0);
+    }
+  }
+
+  private onWheel(e: WheelEvent): void {
+    if (!(e.ctrlKey || e.metaKey) || !this.settings) return;
+    e.preventDefault();
+    void this.changeZoom(e.deltaY < 0 ? LIMITS.zoom.step : -LIMITS.zoom.step);
+  }
+
+  /** delta が 0 なら等倍へ戻す。 */
+  private async changeZoom(delta: number): Promise<void> {
+    const settings = this.settings;
+    if (!settings) return;
+    const next = delta === 0
+      ? 1
+      : Math.round((settings.data.zoom + delta) * 100) / 100;
+    const zoom = clamp(next, LIMITS.zoom.min, LIMITS.zoom.max);
+    if (zoom === settings.data.zoom) return;
+    await settings.update({ zoom });
+    this.toast(`表示倍率 ${Math.round(zoom * 100)}%`);
   }
 
   private async onVaultEvent(ev: VaultEvent): Promise<void> {
@@ -1099,6 +1158,11 @@ export class App {
     this.toastHost.append(node);
     setTimeout(() => node.remove(), 6000);
   }
+}
+
+/** CSS 変数へ書く値。端数が積み上がって滲まないよう 0.1px で丸める。 */
+function round(px: number): number {
+  return Math.round(px * 10) / 10;
 }
 
 function errorMessage(e: unknown): string {

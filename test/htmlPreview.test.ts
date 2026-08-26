@@ -50,3 +50,23 @@ describe('HTML preview security', () => {
     expect(frame.srcdoc).toBe('');
   });
 });
+
+describe('HTML プレビューの拡大', () => {
+  it('等倍なら何も差し込まない', () => {
+    const html = sanitizeHtmlPreview('<p>本文</p>', { zoom: 1 });
+    expect(html).not.toContain('zoom');
+  });
+
+  it('倍率を文書のルートへ差し込む', () => {
+    const html = sanitizeHtmlPreview('<p>本文</p>', { zoom: 1.5 });
+    expect(html).toContain(':root { zoom: 1.5; }');
+    expect(html).toContain('<p>本文</p>');
+  });
+
+  it('拡大しても危険な記述は残さない', () => {
+    const html = sanitizeHtmlPreview('<script>alert(1)</script><p onclick="x()">本文</p>', { zoom: 1.5 });
+    expect(html).not.toContain('alert(1)');
+    expect(html).not.toContain('onclick');
+    expect(html).toContain('zoom: 1.5');
+  });
+});

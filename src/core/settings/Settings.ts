@@ -13,7 +13,26 @@ export interface SettingsData {
   /** Daily Notes 作成時に読み込むテンプレート (空なら使わない) */
   dailyTemplate: string;
   templateFolder: string;
+  /** 表示倍率。UI とエディタの文字サイズにまとめて掛かる */
+  zoom: number;
+  /** 基準の文字サイズ (px)。実際の表示は zoom を掛けた値になる */
+  uiFontSize: number;
+  editorFontSize: number;
+  /** .html を開いたときの既定の表示 */
+  htmlDefaultView: 'preview' | 'source';
+  /** 入力が止まってから保存するまで (ms) */
+  autoSaveDelay: number;
+  /** 外部変更を見に行く間隔 (ms) */
+  pollInterval: number;
 }
+
+export const LIMITS = {
+  zoom: { min: 0.5, max: 2, step: 0.1 },
+  uiFontSize: { min: 11, max: 22 },
+  editorFontSize: { min: 11, max: 32 },
+  autoSaveDelay: { min: 200, max: 10000 },
+  pollInterval: { min: 1000, max: 120000 },
+} as const;
 
 export const DEFAULT_SETTINGS: SettingsData = {
   theme: 'dark',
@@ -23,6 +42,12 @@ export const DEFAULT_SETTINGS: SettingsData = {
   dailyFormat: 'YYYY-MM-DD',
   dailyTemplate: '',
   templateFolder: 'Templates',
+  zoom: 1,
+  uiFontSize: 14,
+  editorFontSize: 14.5,
+  htmlDefaultView: 'preview',
+  autoSaveDelay: 500,
+  pollInterval: 5000,
 };
 
 export const SETTINGS_PATH = '.shiorbit/settings.json';
@@ -37,6 +62,8 @@ const LEGACY_SETTINGS_PATH = '.obidisan/settings.json';
  */
 export class Settings {
   private current: SettingsData = { ...DEFAULT_SETTINGS };
+  /** 保存済みの値。preview 中でもここは動かさない。 */
+  private saved: SettingsData = { ...DEFAULT_SETTINGS };
   private readonly listeners = new Set<(data: SettingsData) => void>();
 
   constructor(private readonly vault: VaultService) {}
@@ -56,6 +83,7 @@ export class Settings {
     try {
       const raw = await this.vault.readNote(SETTINGS_PATH);
       this.current = normalize(JSON.parse(raw.text) as unknown);
+      this.saved = this.current;
     } catch (e) {
       if (isVaultError(e, 'ENOENT')) {
         const migrated = await this.loadLegacy();
@@ -68,14 +96,33 @@ export class Settings {
         console.warn('[Settings] 読み込みに失敗したため既定値を使います', e);
       }
       this.current = { ...DEFAULT_SETTINGS };
+      this.saved = this.current;
     }
     this.emit();
   }
 
+  /** preview 中でも保存済みの値を土台にする（試しただけの値を書き込まないため）。 */
   async update(patch: Partial<SettingsData>): Promise<void> {
-    this.current = normalize({ ...this.current, ...patch });
+    this.current = normalize({ ...this.saved, ...patch });
+    this.saved = this.current;
     this.emit();
     await this.save();
+  }
+
+  /**
+   * 保存せずに見た目だけ試す。
+   * 設定画面で効果を確かめてから決められるようにするための一時適用で、
+   * キャンセルすれば discardPreview() で保存済みの値へ戻る。
+   */
+  preview(patch: Partial<SettingsData>): void {
+    this.current = normalize({ ...this.saved, ...patch });
+    this.emit();
+  }
+
+  discardPreview(): void {
+    if (this.current === this.saved) return;
+    this.current = this.saved;
+    this.emit();
   }
 
   async save(): Promise<void> {
@@ -92,6 +139,7 @@ export class Settings {
     try {
       const raw = await this.vault.readNote(LEGACY_SETTINGS_PATH);
       this.current = normalize(JSON.parse(raw.text) as unknown);
+      this.saved = this.current;
       await this.save();
       return true;
     } catch (e) {
@@ -112,6 +160,11 @@ export function normalize(input: unknown): SettingsData {
   const src = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>;
   const str = (key: keyof SettingsData, fallback: string): string =>
     typeof src[key] === 'string' && src[key] !== '' ? (src[key] as string) : fallback;
+  const num = (key: keyof typeof LIMITS): number => {
+    const value = src[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_SETTINGS[key];
+    return clamp(value, LIMITS[key].min, LIMITS[key].max);
+  };
 
   return {
     theme: src['theme'] === 'light' ? 'light' : 'dark',
@@ -122,5 +175,16 @@ export function normalize(input: unknown): SettingsData {
     dailyFormat: str('dailyFormat', DEFAULT_SETTINGS.dailyFormat),
     dailyTemplate: typeof src['dailyTemplate'] === 'string' ? src['dailyTemplate'] : '',
     templateFolder: str('templateFolder', DEFAULT_SETTINGS.templateFolder),
+    zoom: num('zoom'),
+    uiFontSize: num('uiFontSize'),
+    editorFontSize: num('editorFontSize'),
+    htmlDefaultView: src['htmlDefaultView'] === 'source' ? 'source' : 'preview',
+    autoSaveDelay: num('autoSaveDelay'),
+    pollInterval: num('pollInterval'),
   };
+}
+
+/** 設定値は壊れていても既定値で続行する。範囲外は捨てずに端へ丸める。 */
+export function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }

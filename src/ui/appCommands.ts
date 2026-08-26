@@ -11,6 +11,9 @@ export interface AppCommandActions {
   toggleTheme: () => void | Promise<void>;
   openGraph: () => void;
   openSettings: () => void;
+  zoomIn: () => void | Promise<void>;
+  zoomOut: () => void | Promise<void>;
+  zoomReset: () => void | Promise<void>;
   reindex: () => void | Promise<void>;
   renameCurrentNote: () => void | Promise<void>;
   deleteCurrentNote: () => void | Promise<void>;
@@ -33,6 +36,9 @@ export function registerAppCommands(
     { id: 'toggle-theme', name: 'テーマを切り替える（ダーク / ライト）', run: actions.toggleTheme },
     { id: 'graph', name: 'グラフを開く', hotkey: 'Ctrl+G', run: actions.openGraph },
     { id: 'settings', name: '設定を開く', run: actions.openSettings },
+    { id: 'zoom-in', name: '表示を拡大する', hotkey: 'Ctrl++', run: actions.zoomIn },
+    { id: 'zoom-out', name: '表示を縮小する', hotkey: 'Ctrl+-', run: actions.zoomOut },
+    { id: 'zoom-reset', name: '表示倍率を等倍に戻す', hotkey: 'Ctrl+0', run: actions.zoomReset },
     { id: 'reindex', name: 'インデックスを作り直す', run: actions.reindex },
     {
       id: 'rename-note',
