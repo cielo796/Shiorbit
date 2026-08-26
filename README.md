@@ -143,8 +143,9 @@ HTMLは安全な「プレビュー」が既定表示です。「ソース」に�
 ### Phase 4（アプリ化）
 
 - **iOS / Android アダプタ** — `@capacitor/filesystem` 越しに端末の実フォルダを読み書きします。
-  Vault は `Documents/Shiorbit/`。iOS では「ファイル」アプリに現れ、iCloud Drive で PC と同期できます。
-  旧版の `Documents/Obidisan/` がある場合は、初回起動時に自動で移行します。
+  iOS の Vault は `Documents/Obdisan/`。「ファイル」アプリに現れ、iCloud Drive で PC と同期できます。
+  Android は初回起動時にシステムのフォルダ選択画面から `Documents/Obdisan/` を選びます。Storage Access Framework の永続URI権限を使うため、Android 11以降でも既存ファイルをそのまま読み書きできます。
+  iOS で以前の `Documents/Shiorbit/` または旧版の `Documents/Obidisan/` がある場合は、初回起動時に自動で移行します。
 - **Node / Electron アダプタ** — デスクトップアプリ用。`fs` を直接は触らず `FsBridge` 越しに呼ぶので、
   Electron のレンダラから preload 経由の IPC を差し込めます。
 - **モバイル UI** — Markdown 記号ツールバー（`[[` `#` `- [ ]` 太字 引用 元に戻す…）、
@@ -207,8 +208,9 @@ npx cap add android
 npm run cap:android
 ```
 
-v1 ではアプリ専用の `Documents/Shiorbit/` を使います。
-任意フォルダを選べるようにするには SAF（Storage Access Framework）が必要で、これは今後の課題です。
+Android では SAF（Storage Access Framework）のシステム画面で選んだ任意のフォルダを Vault として使います。
+選択時の読み書き権限は再起動後も維持され、「設定を解除」しても Vault 内の実ファイルは削除されません。
+iOS ではアプリの `Documents/Obdisan/` を使います。
 
 ### デスクトップ（Electron）
 

@@ -18,6 +18,11 @@ export interface CapFileInfo {
   mtime: number;
 }
 
+export interface CapRecursiveFileInfo extends CapFileInfo {
+  /** scanTree() を呼んだディレクトリからの相対パス */
+  path: string;
+}
+
 /** @capacitor/filesystem のうち、このアダプタが使う部分だけ */
 export interface CapFilesystem {
   readFile: (o: { path: string; directory?: string; encoding?: string }) => Promise<{ data: string | Blob }>;
@@ -29,6 +34,8 @@ export interface CapFilesystem {
     recursive?: boolean;
   }) => Promise<unknown>;
   readdir: (o: { path: string; directory?: string }) => Promise<{ files: CapFileInfo[] }>;
+  /** ネイティブ側でツリーを一括走査できる実装向けの高速経路。 */
+  scanTree?: (o: { path: string; directory?: string }) => Promise<{ files: CapRecursiveFileInfo[] }>;
   mkdir: (o: { path: string; directory?: string; recursive?: boolean }) => Promise<unknown>;
   rmdir: (o: { path: string; directory?: string; recursive?: boolean }) => Promise<unknown>;
   deleteFile: (o: { path: string; directory?: string }) => Promise<unknown>;
@@ -89,6 +96,31 @@ class CapacitorAdapter implements VaultAdapter {
 
   async list(dir: VPath, recursive: boolean, withStat = false): Promise<Entry[]> {
     const out: Entry[] = [];
+    const root = normalize(dir);
+
+    // SAF は1ディレクトリごとの JS/native 往復が高コストなので、対応している
+    // プラグインではツリー全体をネイティブ側で走査して1回で受け取る。
+    if (recursive && this.fs.scanTree) {
+      try {
+        const files = (
+          await this.fs.scanTree({ path: this.p(root), directory: this.directory })
+        ).files;
+        for (const info of files) {
+          const relative = normalize(info.path);
+          const path = root === '' ? relative : `${root}/${relative}`;
+          if (info.type === 'directory') {
+            out.push({ path, name: info.name, kind: 'dir' });
+          } else if (withStat) {
+            out.push({ path, name: info.name, kind: 'file', mtime: info.mtime, size: info.size });
+          } else {
+            out.push({ path, name: info.name, kind: 'file' });
+          }
+        }
+        return out;
+      } catch (e) {
+        mapError(e, root);
+      }
+    }
 
     const walk = async (prefix: VPath): Promise<void> => {
       let files: CapFileInfo[];
@@ -112,7 +144,7 @@ class CapacitorAdapter implements VaultAdapter {
       }
     };
 
-    await walk(normalize(dir));
+    await walk(root);
     return out;
   }
 

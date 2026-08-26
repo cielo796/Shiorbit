@@ -10,5 +10,20 @@ build/*
 !build/icon.ico
 ios/
 android/
+# Android プラットフォーム全体は生成物として扱うが、SAF の独自実装だけは追跡する。
+!android/
+android/*
+!android/app/
+android/app/*
+!android/app/src/
+android/app/src/*
+!android/app/src/main/
+android/app/src/main/*
+!android/app/src/main/java/
+android/app/src/main/java/*
+!android/app/src/main/java/app/
+android/app/src/main/java/app/*
+!android/app/src/main/java/app/shiorbit/
+!android/app/src/main/java/app/shiorbit/**
 .shiorbit/
 *.log
