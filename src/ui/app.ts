@@ -1,5 +1,5 @@
 import type { VaultAdapter } from '../core/vault/VaultAdapter';
-import type { VPath } from '../core/vault/types';
+import type { Entry, VPath } from '../core/vault/types';
 import type { KeyValueStore } from '../core/storage/KeyValueStore';
 import { VaultService, type VaultEvent } from '../core/vault/VaultService';
 import { ConflictError, isVaultError } from '../core/vault/errors';
@@ -10,6 +10,7 @@ import { CommandRegistry } from '../core/commands/CommandRegistry';
 import type { Heading } from '../core/markdown/scan';
 import { dailyPath } from '../core/notes/date';
 import { applyTemplate } from '../core/notes/template';
+import { extractSection } from '../core/markdown/section';
 import { newDocumentBody } from '../core/notes/newDocument';
 import { MarkdownEditor, type EditorViewState } from './editor';
 import { Explorer } from './explorer';
@@ -34,6 +35,8 @@ import { button, el, noteLabel } from './dom';
 import { clearHtmlPreview, createHtmlPreviewFrame, renderHtmlPreview } from './htmlPreview';
 import { confirmDialog } from './dialog';
 import { askNewDocument } from './newDocumentDialog';
+import { AttachmentUrlCache, isEmbeddableImage } from './embed/attachmentUrl';
+import type { EmbedContent } from './embed/embedWidget';
 
 /** Vault の入手方法。実装は main.ts (合成ルート) から注入される。 */
 export interface VaultSource {
@@ -89,6 +92,10 @@ export class App {
   private readonly viewStates = new Map<VPath, EditorViewState>();
   /** プレビューに送った見出し番号。ソースへ戻るときの手掛かりにする。 */
   private previewHeadingIndex = 0;
+  /** 埋め込み画像の ObjectURL。上限つきで、Vault を閉じるときに必ず解放する。 */
+  private attachments: AttachmentUrlCache | null = null;
+  /** 添付ファイルの所在。索引はドキュメントしか持たないので別に覚える。 */
+  private readonly attachmentPaths = new Map<string, VPath>();
 
   private els: {
     workspace: HTMLElement;
@@ -110,6 +117,10 @@ export class App {
   private readonly wikilinks: WikilinkProvider = {
     isResolved: (target) => this.index?.resolve(target, this.currentPath ?? '') != null,
     follow: (target) => void this.followLink(target),
+    embeds: {
+      resolve: (target, subpath) => this.resolveEmbed(target, subpath),
+      open: (target) => void this.followLink(target),
+    },
     suggest: () => {
       const items = this.index?.suggestions() ?? [];
       const counts = new Map<string, number>();
@@ -281,6 +292,8 @@ export class App {
 
     const vault = new VaultService(adapter);
     this.vault = vault;
+    this.attachments?.clear();
+    this.attachments = new AttachmentUrlCache((path) => vault.readBinary(path));
     this.settings = new Settings(vault);
     this.index = new Indexer(vault, this.deps.cache ? { cache: this.deps.cache } : {});
     this.currentPath = null;
@@ -395,6 +408,9 @@ export class App {
     this.currentPath = null;
     this.dirty = false;
     this.viewStates.clear();
+    this.attachments?.clear();
+    this.attachments = null;
+    this.attachmentPaths.clear();
     this.renderWelcome();
   }
 
@@ -637,11 +653,76 @@ export class App {
   private async refreshTree(): Promise<void> {
     if (!this.vault || !this.explorer) return;
     try {
-      this.explorer.setEntries(await this.vault.listDocumentTree());
+      // 一覧は1回だけ取り、ツリー用と添付用に振り分ける。
+      const entries = await this.vault.listAll();
+      this.explorer.setEntries(entries.filter((e) => e.kind === 'dir' || isSupportedDocument(e.path)));
       this.explorer.setActive(this.currentPath);
+      this.indexAttachments(entries);
     } catch (e) {
       this.toast(errorMessage(e), true);
     }
+  }
+
+  /** フルパスと（重複しなければ）ファイル名の両方から引けるようにする。 */
+  private indexAttachments(entries: Entry[]): void {
+    this.attachmentPaths.clear();
+    const names = new Map<string, VPath | null>();
+
+    for (const entry of entries) {
+      if (entry.kind !== 'file' || !isEmbeddableImage(entry.path)) continue;
+      this.attachmentPaths.set(entry.path.toLowerCase(), entry.path);
+      const name = basename(entry.path).toLowerCase();
+      names.set(name, names.has(name) ? null : entry.path);
+    }
+
+    for (const [name, path] of names) {
+      if (path !== null && !this.attachmentPaths.has(name)) this.attachmentPaths.set(name, path);
+    }
+  }
+
+  /**
+   * ![[...]] の中身を解決する。
+   *
+   * **展開は1階層まで。** 返すのは素のテキストで、その中の ![[...]] は展開しない。
+   * 深く辿ると循環参照（A が B を、B が A を埋め込む）で止まらなくなるため。
+   */
+  private async resolveEmbed(target: string, subpath?: string): Promise<EmbedContent | null> {
+    const vault = this.vault;
+    if (!vault) return null;
+
+    if (isEmbeddableImage(target)) {
+      const path = this.findAttachment(target);
+      if (path === null) return null;
+      const url = await this.attachments?.get(path);
+      return url ? { kind: 'image', url, alt: basename(path) } : null;
+    }
+
+    const path = this.index?.resolve(target, this.currentPath ?? '') ?? null;
+    if (path === null) return null;
+
+    try {
+      const note = await vault.readNote(path);
+      const text = subpath === undefined ? note.text : extractSection(note.text, subpath);
+      return text === null ? null : { kind: 'note', path, text: clipEmbed(text) };
+    } catch {
+      return null;
+    }
+  }
+
+  /** 開いているノートからの相対 → Vault ルート → ファイル名、の順に探す。 */
+  private findAttachment(target: string): VPath | null {
+    const dir = this.currentPath ? dirname(this.currentPath) : '';
+    const candidates = [
+      dir === '' ? '' : normalize(`${dir}/${target}`),
+      normalize(target),
+      basename(target),
+    ];
+    for (const candidate of candidates) {
+      if (candidate === '') continue;
+      const found = this.attachmentPaths.get(candidate.toLowerCase());
+      if (found !== undefined) return found;
+    }
+    return null;
   }
 
   private async reindexAll(force = false): Promise<void> {
@@ -1220,6 +1301,12 @@ export class App {
     this.toastHost.append(node);
     setTimeout(() => node.remove(), 6000);
   }
+}
+
+/** 埋め込みは抜粋。丸ごと出すと元ノートより長くなって読めなくなる。 */
+function clipEmbed(text: string, limit = 1200): string {
+  const trimmed = text.trim();
+  return trimmed.length <= limit ? trimmed : `${trimmed.slice(0, limit)}…`;
 }
 
 /** CSS 変数へ書く値。端数が積み上がって滲まないよう 0.1px で丸める。 */

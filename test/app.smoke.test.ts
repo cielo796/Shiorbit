@@ -610,4 +610,35 @@ describe('App の起動', () => {
     // 先頭ではなく、離れたときの位置が復元される。
     expect(root.querySelector('.outline-item.active')?.textContent).toBe('見出し 30');
   });
+  it('![[...]] が画像とノートの中身に展開される', async () => {
+    const originalCreate = URL.createObjectURL;
+    URL.createObjectURL = (): string => 'blob:test/img';
+
+    const adapter = new MemoryAdapter('Embed UI');
+    await adapter.writeBinary('img/logo.png', new ArrayBuffer(8));
+    await adapter.write('Parts/Note.md', '# Note\n\n## 実行環境\n\nOllama を使う。\n');
+    await adapter.write('main.md', 'ここに置く\n\n![[logo.png]]\n\n![[Note#実行環境]]\n\n終わり\n');
+
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    const row = [...root.querySelectorAll('.tree .row')]
+      .find((node) => node.querySelector('.label')?.textContent === 'main')!;
+    (row as HTMLElement).click();
+    for (let i = 0; i < 14; i++) await tick();
+
+    const image = root.querySelector<HTMLImageElement>('.cm-embed-image');
+    expect(image).not.toBeNull();
+    expect(image!.src).toBe('blob:test/img');
+
+    const note = root.querySelector('.cm-embed-note');
+    expect(note?.textContent).toContain('Ollama を使う。');
+    // 指定した節だけを出す。
+    expect(note?.textContent).not.toContain('# Note');
+
+    URL.createObjectURL = originalCreate;
+  });
 });

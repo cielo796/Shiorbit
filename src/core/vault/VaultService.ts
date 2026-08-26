@@ -106,6 +106,11 @@ export class VaultService {
     return all.filter((e) => e.kind === 'dir' || isSupportedDocument(e.path));
   }
 
+  /** 画像などの添付ファイル。テキストとして読めないものはこちらを使う。 */
+  readBinary(path: VPath): Promise<ArrayBuffer> {
+    return this.adapter.readBinary(path);
+  }
+
   async readNote(path: VPath): Promise<NoteContent> {
     const [text, stat] = await Promise.all([
       this.adapter.read(path),
