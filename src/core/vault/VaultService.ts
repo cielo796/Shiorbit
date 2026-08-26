@@ -1,7 +1,7 @@
 import type { VaultAdapter } from './VaultAdapter';
 import type { Entry, FileEvent, Unsubscribe, VPath } from './types';
 import { ConflictError, isVaultError } from './errors';
-import { isHidden, isMarkdown, isSupportedDocument } from './path';
+import { isHidden, isMarkdown, isOpenable, isSupportedDocument } from './path';
 
 export interface NoteContent {
   path: VPath;
@@ -103,7 +103,7 @@ export class VaultService {
   /** ツリー表示用。ディレクトリと、エディタで開けるファイルだけを返す。 */
   async listDocumentTree(): Promise<Entry[]> {
     const all = await this.listAll();
-    return all.filter((e) => e.kind === 'dir' || isSupportedDocument(e.path));
+    return all.filter((e) => e.kind === 'dir' || isOpenable(e.path));
   }
 
   /** 画像などの添付ファイル。テキストとして読めないものはこちらを使う。 */

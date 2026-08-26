@@ -55,6 +55,16 @@ export function isHtml(p: VPath): boolean {
   return ext === '.html' || ext === '.htm';
 }
 
+/** プロパティの表 (.base)。エディタではなく表として開く。 */
+export function isBase(p: VPath): boolean {
+  return extname(p).toLowerCase() === '.base';
+}
+
+/** ツリーに出す、Shiorbit が開けるファイル。 */
+export function isOpenable(p: VPath): boolean {
+  return isSupportedDocument(p) || isBase(p);
+}
+
 /** Shiorbit がテキストとして開いて編集できるファイル。 */
 export function isSupportedDocument(p: VPath): boolean {
   return isMarkdown(p) || isHtml(p);

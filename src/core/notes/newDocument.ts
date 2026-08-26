@@ -1,14 +1,21 @@
-import { extname, isHtml, isMarkdown, isSupportedDocument, join, normalize } from '../vault/path';
+import { extname, isBase, isHtml, isMarkdown, isSupportedDocument, join, normalize } from '../vault/path';
 import type { VPath } from '../vault/types';
+import { defaultBase, stringifyBase } from '../bases/parse';
 
 /** 新規作成で選べる種別。folder だけはファイルではなくディレクトリを作る。 */
-export type NewDocumentKind = 'markdown' | 'html' | 'folder';
+export type NewDocumentKind = 'markdown' | 'html' | 'base' | 'folder';
 
 export interface NewDocumentPlan {
   path: VPath;
   /** 入力の拡張子から種別が確定した場合は、選択より拡張子を優先する。 */
   kind: NewDocumentKind;
 }
+
+const EXTENSIONS: Record<Exclude<NewDocumentKind, 'folder'>, string> = {
+  markdown: '.md',
+  html: '.html',
+  base: '.base',
+};
 
 /** Windows / macOS のどちらかで使えない文字。作成してから失敗するより先に弾く。 */
 const INVALID_CHARS = /[\:*?"<>|]/;
@@ -31,9 +38,10 @@ export function resolveNewDocument(
   const path = join(baseDir, trimmed);
   if (path === '') return null;
   if (kind === 'folder') return { path, kind };
+  if (isBase(path)) return { path, kind: 'base' };
   if (isSupportedDocument(path)) return { path, kind: isHtml(path) ? 'html' : 'markdown' };
 
-  return { path: `${path}${kind === 'html' ? '.html' : '.md'}`, kind };
+  return { path: `${path}${EXTENSIONS[kind]}`, kind };
 }
 
 /** 作成できない入力の理由。問題なければ null。 */
@@ -44,14 +52,15 @@ export function invalidNameReason(name: string): string | null {
   if (normalize(trimmed) === '') return 'その名前では作成できません。';
 
   const ext = extname(trimmed);
-  if (ext !== '' && !isMarkdown(trimmed) && !isHtml(trimmed)) {
-    return '拡張子は .md / .html / .htm のいずれかにしてください。';
+  if (ext !== '' && !isMarkdown(trimmed) && !isHtml(trimmed) && !isBase(trimmed)) {
+    return '拡張子は .md / .html / .htm / .base のいずれかにしてください。';
   }
   return null;
 }
 
 /** 新規ファイルの初期内容。開いた直後に書き始められる形にする。 */
 export function newDocumentBody(kind: NewDocumentKind, title: string): string {
+  if (kind === 'base') return stringifyBase(defaultBase(title));
   if (kind !== 'html') return `# ${title}\n\n`;
 
   return [

@@ -3,7 +3,9 @@ import type { Entry, VPath } from '../core/vault/types';
 import type { KeyValueStore } from '../core/storage/KeyValueStore';
 import { VaultService, type VaultEvent } from '../core/vault/VaultService';
 import { ConflictError, isVaultError } from '../core/vault/errors';
-import { basename, dirname, isHtml, isMarkdown, isSupportedDocument, normalize } from '../core/vault/path';
+import {
+  basename, dirname, isBase, isHtml, isMarkdown, isOpenable, isSupportedDocument, normalize,
+} from '../core/vault/path';
 import { Indexer } from '../core/index/Indexer';
 import { LIMITS, Settings, clamp } from '../core/settings/Settings';
 import { CommandRegistry } from '../core/commands/CommandRegistry';
@@ -11,6 +13,8 @@ import type { Heading } from '../core/markdown/scan';
 import { dailyPath } from '../core/notes/date';
 import { applyTemplate } from '../core/notes/template';
 import { extractSection } from '../core/markdown/section';
+import { defaultBase, parseBase } from '../core/bases/parse';
+import type { BaseDefinition } from '../core/bases/types';
 import { newDocumentBody } from '../core/notes/newDocument';
 import { MarkdownEditor, type EditorViewState } from './editor';
 import { Explorer } from './explorer';
@@ -35,6 +39,7 @@ import { button, el, noteLabel } from './dom';
 import { clearHtmlPreview, createHtmlPreviewFrame, renderHtmlPreview } from './htmlPreview';
 import { confirmDialog } from './dialog';
 import { askNewDocument } from './newDocumentDialog';
+import { BasesView } from './basesView';
 import { AttachmentUrlCache, isEmbeddableImage } from './embed/attachmentUrl';
 import type { EmbedContent } from './embed/embedWidget';
 
@@ -96,6 +101,9 @@ export class App {
   private attachments: AttachmentUrlCache | null = null;
   /** 添付ファイルの所在。索引はドキュメントしか持たないので別に覚える。 */
   private readonly attachmentPaths = new Map<string, VPath>();
+  private basesView: BasesView | null = null;
+  /** いま表として開いている .base。エディタで開いているときは null。 */
+  private currentBase: BaseDefinition | null = null;
 
   private els: {
     workspace: HTMLElement;
@@ -392,6 +400,8 @@ export class App {
     this.vault?.dispose();
 
     this.settingsModal = null;
+    this.basesView = null;
+    this.currentBase = null;
     this.graphModal = null;
     this.rightPane = null;
     this.editor = null;
@@ -511,7 +521,9 @@ export class App {
     editor.dom.style.display = 'none';
     const htmlPreview = createHtmlPreviewFrame();
     htmlPreview.style.display = 'none';
-    editorHost.append(emptyNote, editor.dom, htmlPreview);
+    this.basesView = new BasesView({ onOpen: (path) => void this.openNote(path) });
+    this.basesView.dom.style.display = 'none';
+    editorHost.append(emptyNote, editor.dom, htmlPreview, this.basesView.dom);
 
     const toolbar = new MobileToolbar({ editor: () => this.editor });
     this.mobileToolbar = toolbar;
@@ -655,7 +667,7 @@ export class App {
     try {
       // 一覧は1回だけ取り、ツリー用と添付用に振り分ける。
       const entries = await this.vault.listAll();
-      this.explorer.setEntries(entries.filter((e) => e.kind === 'dir' || isSupportedDocument(e.path)));
+      this.explorer.setEntries(entries.filter((e) => e.kind === 'dir' || isOpenable(e.path)));
       this.explorer.setActive(this.currentPath);
       this.indexAttachments(entries);
     } catch (e) {
@@ -751,6 +763,7 @@ export class App {
     this.searchPane?.refresh();
     this.rightPane?.update(index, this.currentPath);
     this.graphModal?.refresh();
+    if (this.currentBase) this.basesView?.setNotes(index.allMeta());
 
     this.editor?.applyEffects([refreshPreview.of(null)]);
   }
@@ -759,6 +772,10 @@ export class App {
 
   private async openNote(path: VPath, offset?: number): Promise<void> {
     if (!this.vault || !this.editor || !this.els) return;
+    if (isBase(path)) {
+      await this.openBase(path);
+      return;
+    }
     if (!isSupportedDocument(path)) {
       this.toast(`${path} は未対応のファイル形式です。`, true);
       return;
@@ -769,6 +786,7 @@ export class App {
     try {
       const note = await this.vault.readNote(path);
       const restored = offset === undefined ? this.viewStates.get(path) : undefined;
+      this.currentBase = null;
       this.currentPath = path;
       this.baseMtime = note.mtime;
       this.dirty = false;
@@ -791,6 +809,41 @@ export class App {
       this.updateDocumentView();
       if (offset !== undefined) this.revealDocumentOffset(offset);
       else if (!isHtml(path)) this.editor.focus();
+    } catch (e) {
+      this.toast(errorMessage(e), true);
+    }
+  }
+
+  /**
+   * `.base` はエディタではなく表として開く。
+   * 定義が壊れていても既定の列で開けるようにして、書き直せる余地を残す。
+   */
+  private async openBase(path: VPath): Promise<void> {
+    const vault = this.vault;
+    const els = this.els;
+    if (!vault || !els || !this.basesView) return;
+    if (this.dirty) await this.saveNow();
+    this.rememberViewState();
+
+    try {
+      const file = await vault.readNote(path);
+      const parsed = parseBase(file.text);
+      const base = parsed.columns.length > 0 ? parsed : { ...defaultBase(basename(path, true)), ...parsed, columns: defaultBase(basename(path, true)).columns };
+
+      this.currentPath = path;
+      this.currentBase = base.name === '' ? { ...base, name: basename(path, true) } : base;
+      this.baseMtime = file.mtime;
+      this.dirty = false;
+      els.emptyNote.style.display = 'none';
+      els.title.textContent = path;
+      els.statusPath.textContent = path;
+      this.explorer?.setActive(path);
+      this.setSaveState('idle');
+      els.workspace.classList.remove('drawer-open');
+      this.mobileNav?.setActive(null);
+      this.basesView.setBase(this.currentBase, this.index?.allMeta() ?? []);
+      this.onIndexChanged();
+      this.updateDocumentView();
     } catch (e) {
       this.toast(errorMessage(e), true);
     }
@@ -870,12 +923,14 @@ export class App {
     const editor = this.editor;
     if (!els || !editor) return;
     const hasDocument = this.currentPath !== null;
+    const base = this.currentBase !== null;
     const html = isHtml(this.currentPath ?? '');
     const preview = html && this.htmlViewMode === 'preview';
 
     els.htmlModes.style.display = html ? '' : 'none';
     els.htmlPreview.style.display = preview ? '' : 'none';
-    editor.dom.style.display = hasDocument && !preview ? '' : 'none';
+    if (this.basesView) this.basesView.dom.style.display = base ? '' : 'none';
+    editor.dom.style.display = hasDocument && !preview && !base ? '' : 'none';
     this.mobileToolbar?.setVisible(hasDocument && isMarkdown(this.currentPath ?? ''));
 
     for (const [mode, modeButton] of els.htmlModeButtons) {
@@ -1032,7 +1087,8 @@ export class App {
     }
     const vault = this.vault;
     const path = this.currentPath;
-    if (!vault || !path || !this.editor || !this.dirty) return;
+    // .base は読み取り専用の表なので、エディタの内容で上書きしない。
+    if (!vault || !path || !this.editor || !this.dirty || this.currentBase) return;
 
     const text = this.editor.getDoc();
     this.setSaveState('saving');
@@ -1158,6 +1214,9 @@ export class App {
   private closeNote(): void {
     if (!this.els || !this.editor) return;
     this.currentPath = null;
+    this.currentBase = null;
+    this.basesView?.setBase(null, []);
+    if (this.basesView) this.basesView.dom.style.display = 'none';
     this.dirty = false;
     this.editor.setDoc('');
     this.editor.dom.style.display = 'none';

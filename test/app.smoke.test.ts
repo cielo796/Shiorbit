@@ -641,4 +641,61 @@ describe('App の起動', () => {
 
     URL.createObjectURL = originalCreate;
   });
+  it('.base を開くと表が出て、列ヘッダで並べ替えられる', async () => {
+    const adapter = new MemoryAdapter('Bases UI');
+    await adapter.write('Books/A.md', ['---', 'status: 読了', 'rating: 5', '---', '# A'].join('\n'));
+    await adapter.write('Books/B.md', ['---', 'status: 読了', 'rating: 3', '---', '# B'].join('\n'));
+    await adapter.write('Books/C.md', ['---', 'status: 未読', '---', '# C'].join('\n'));
+    await adapter.write('読書.base', [
+      'name: 読書リスト',
+      'from:',
+      '  folder: Books',
+      'where:',
+      '  - property: status',
+      '    op: equals',
+      '    value: 読了',
+      'columns:',
+      '  - property: file.name',
+      '    label: タイトル',
+      '  - property: rating',
+      'sort:',
+      '  property: rating',
+      '  order: desc',
+    ].join('\n'));
+
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    const row = [...root.querySelectorAll('.tree .row')]
+      .find((node) => node.querySelector('.label')?.textContent === '読書.base')!;
+    (row as HTMLElement).click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    expect(root.querySelector('.bases-name')?.textContent).toBe('読書リスト');
+    // 並べ替えのたびに表を組み直すので、都度引き直す。
+    const table = (): Element => root.querySelector('.bases-table')!;
+    const names = (): string[] =>
+      [...table().querySelectorAll('tbody tr')].map((tr) => tr.querySelector('td')!.textContent!);
+
+    // where で 未読 が外れ、sort: desc で rating の高い順。
+    expect(names()).toEqual(['A', 'B']);
+    // 並び替え中の列には向きの印が付く。
+    expect([...table().querySelectorAll('thead th')].map((th) => th.textContent))
+      .toEqual(['タイトル', 'rating▼']);
+
+    // 列ヘッダのクリックで昇順に切り替わる。
+    [...table().querySelectorAll<HTMLButtonElement>('.bases-sort')]
+      .find((b) => b.textContent?.startsWith('rating'))!.click();
+    for (let i = 0; i < 3; i++) await tick();
+    expect(names()).toEqual(['B', 'A']);
+
+    // 行をクリックするとそのノートが開く。
+    root.querySelector<HTMLElement>('.bases-row')!.click();
+    for (let i = 0; i < 10; i++) await tick();
+    expect(root.querySelector('.main-title')?.textContent).toBe('Books/B.md');
+    expect(root.querySelector<HTMLElement>('.bases-view')?.style.display).toBe('none');
+  });
 });

@@ -528,6 +528,35 @@ mark { background: rgba(167, 139, 250, .3); color: inherit; border-radius: 2px; 
   .settings-vault-actions { flex-wrap: wrap; }
 }
 
+/* ------------------------------------------------------------------- Bases */
+
+.bases-view { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.bases-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 12px 16px 8px; border-bottom: 1px solid var(--border);
+}
+.bases-name { font-size: calc(var(--ui-font-size) * 1.0714); font-weight: 600; }
+.bases-count { font-size: calc(var(--ui-font-size) * 0.8214); color: var(--fg-faint); }
+.bases-scroll { overflow: auto; min-height: 0; }
+.bases-table { border-collapse: collapse; width: 100%; font-size: calc(var(--ui-font-size) * 0.9286); }
+.bases-table th, .bases-table td {
+  text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px;
+}
+.bases-table thead th {
+  position: sticky; top: 0; background: var(--bg-elev); z-index: 1;
+  color: var(--fg-faint); font-weight: 600;
+}
+.bases-sort {
+  background: none; border: none; padding: 0; font: inherit;
+  color: inherit; cursor: pointer; display: inline-flex; gap: 4px; align-items: center;
+}
+.bases-sort:hover { color: var(--fg); }
+.bases-arrow { font-size: calc(var(--ui-font-size) * 0.6429); color: var(--accent); }
+.bases-row { cursor: pointer; }
+.bases-row:hover { background: var(--bg-hover); }
+.bases-row:focus-visible { outline: 1px solid var(--accent-dim); outline-offset: -1px; }
+
 /* -------------------------------------------------------------- ダイアログ */
 
 .dialog { max-width: 460px; }

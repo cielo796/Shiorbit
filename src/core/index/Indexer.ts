@@ -300,6 +300,11 @@ export class Indexer {
     return this.entries.has(path);
   }
 
+  /** 索引にあるすべてのノートのメタ情報。Bases の問い合わせに使う。 */
+  allMeta(): NoteMeta[] {
+    return [...this.entries.values()].map(({ meta }) => meta);
+  }
+
   /** 指定ノートから出ているリンク (未解決も含む) */
   outgoing(path: VPath): OutLink[] {
     return this.entries.get(path)?.out ?? [];

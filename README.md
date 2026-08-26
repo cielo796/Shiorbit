@@ -171,10 +171,15 @@ HTMLは安全な「プレビュー」が既定表示です。「ソース」に�
   `![[ノート]]` はそのノートの中身を、`![[ノート#見出し]]` はその節だけを引用表示します。
   **展開は1階層まで**です（埋め込みの中の埋め込みは辿りません。循環参照で止まらなくなるため）。
   画像の ObjectURL は 50 件の上限つきで管理し、あふれた分と Vault を閉じるときに必ず解放します。
+- **Bases** — `.base`（YAML）を置くと、frontmatter のプロパティを表として見られます。
+  「+ 新規」の **Base** で作れます。フォルダとタグで対象を絞り、`where` で条件を付け、
+  列ヘッダのクリックで並べ替え、行のクリックでそのノートを開きます。
+  組み込みの列は `file.name` `file.path` `file.mtime` `file.size` `file.tags` です。
+  **v1 は読み取り専用**です（セル編集は入れていません）。
 - **設定画面** — 変更は保存前にその場で反映され、閉じれば元に戻ります。
   表示倍率・文字サイズ・HTML の既定表示・自動保存の待ち時間・外部変更を見に行く間隔を変えられます。
 
-まだ無いもの: Bases・Canvas（Phase 5）、プラグイン API・Webクリッパ（Phase 6）。
+まだ無いもの: Canvas（Phase 5）、プラグイン API・Webクリッパ（Phase 6）。
 
 ### 境界の答え合わせ
 
@@ -360,6 +365,7 @@ src/
 │  │  ├─ buildGraph.ts         リンク構造 → グラフ（フォーカス・絞り込み・上限）
 │  │  ├─ layout.ts             d3-force による力学レイアウト
 │  │  └─ types.ts
+│  ├─ bases/                   types.ts / parse.ts（.base の読み書き）/ query.ts（純粋な問い合わせ）
 │  ├─ settings/Settings.ts     .shiorbit/settings.json（範囲検証・プレビュー）
 │  ├─ commands/CommandRegistry.ts
 │  ├─ refactor/                planRename.ts（影響範囲）/ renameLink.ts（書き換え）
@@ -400,6 +406,7 @@ src/
    ├─ outlinePane.ts           見出しツリー
    ├─ rightPane.ts             右ペインの取りまとめ
    ├─ htmlPreview.ts           HTML の防御的サニタイズと sandbox 描画
+   ├─ basesView.ts             .base の表（読み取り専用）
    ├─ settingsModal.ts         設定画面
    ├─ mobileToolbar.ts         スマホの Markdown 記号ツールバー
    ├─ mobileNav.ts             スマホのボトムナビ

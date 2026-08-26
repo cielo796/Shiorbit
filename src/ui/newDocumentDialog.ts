@@ -13,6 +13,7 @@ export interface NewDocumentDialogOptions {
 const KINDS: Array<{ id: NewDocumentKind; label: string }> = [
   { id: 'markdown', label: 'Markdown' },
   { id: 'html', label: 'HTML' },
+  { id: 'base', label: 'Base' },
   { id: 'folder', label: 'フォルダ' },
 ];
 
