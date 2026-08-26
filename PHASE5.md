@@ -501,7 +501,7 @@ Vault への書き込み経路の選定（ネイティブメッセージング /
 |---|---|
 | B1 | **完了** — Android SAF 一式をコミット済み（`androidSaf.ts` / `SafVaultPlugin.java` / テスト2本 / `android/`）。実機検証はしないが、作業消失を防ぐためコミットだけ先に。`android/` の生成物（`.gradle` `build`）は `.gitignore` を確認 |
 | B2 | **完了** — README の記述同期（「Electron の main/preload はまだ」「Android はアプリ専用フォルダ固定」が実装と矛盾。見出しの「Phase 4」も） |
-| B3 | 継続 — `app.ts` は 1,150 行前後。S1〜S4 の実装本体を `app.ts` に足さない（ダイアログ・スクロール管理は独立モジュールへ） |
+| B3 | 継続 — `app.ts` は 1,379 行。埋め込みの解決は `embedResolver.ts` へ出した。S1〜S4 の実装本体を `app.ts` に足さない（ダイアログ・スクロール管理は独立モジュールへ） |
 
 ### 保留（あとで）
 
