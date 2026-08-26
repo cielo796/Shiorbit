@@ -1,4 +1,4 @@
-# Shiorbit — Phase 4
+# Shiorbit — Phase 5
 
 Obsidian 互換のローカル Markdown ノートアプリ。ノートの実体は普通の `.md` ファイルで、
 アプリを捨てても資産が残ります。
@@ -10,7 +10,8 @@ Obsidian 互換のローカル Markdown ノートアプリ。ノートの実体�
 | [PHASE5.md](./PHASE5.md) | 次フェーズの実装仕様 — 現状の棚卸しと機能仕様 |
 | README.md（この文書） | 使い方・ビルド手順・できること |
 
-**このリポジトリは Phase 5 を実装中です。** Phase 0〜4（土台 / ナレッジベース化 / 実用化 / グラフ / アプリ化）は完了し、アウトラインとリンクのリネーム追従まで利用できます。
+**このリポジトリは Phase 5 を実装中です。** Phase 0〜4（土台 / ナレッジベース化 / 実用化 / グラフ / アプリ化）は完了し、
+アウトライン・リンクのリネーム追従に加えて、新規作成・表示の拡大縮小・設定画面・位置の復元まで利用できます。
 
 ---
 
@@ -74,6 +75,7 @@ HTMLは安全な「プレビュー」が既定表示です。「ソース」に�
 | `Ctrl+Shift+D` | 今日のノートを開く |
 | `Ctrl+G` | グラフを開く |
 | `Ctrl+S` | すぐ保存する |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | 表示を拡大 / 縮小 / 等倍に戻す（`Ctrl+ホイール`も同じ） |
 | `Ctrl+Enter` | カーソル位置のリンクを開く |
 | `Ctrl+クリック` | リンクを開く |
 
@@ -156,6 +158,15 @@ HTMLは安全な「プレビュー」が既定表示です。「ソース」に�
 
 - **アウトライン** — 右ペインに Markdown / HTML の見出しを階層表示します。クリックで該当位置へ移動し、カーソルやスクロール位置にも追従します。
 - **リンクのリネーム追従** — ファイルツリーの鉛筆ボタンまたはコマンドパレットからノート名を変更できます。実行前に対象ノート数と書き換え箇所数を表示し、同名の別ノートへ解決されるリンクは変更しません。
+- **新規作成** — 「+」または フォルダ行の「＋」から、Markdown / HTML / フォルダを選んで作れます。
+  名前を打つと**どこに何ができるか**を押す前に表示します。`page.html` のように拡張子を書けばその形式になります。
+  入力や確認はすべてアプリ内のダイアログです（Electron には `window.prompt` が無いため）。
+- **表示の拡大・縮小** — `Ctrl+=` / `Ctrl+-` / `Ctrl+0`、`Ctrl+ホイール`。HTML プレビューにも効きます。
+  基準の文字サイズ（UI / エディタ）は設定から別々に変えられます。
+- **読んでいた位置を保つ** — ノートを切り替えて戻っても、カーソルとスクロール位置が復元されます。
+  外部の変更を読み込んだときも位置を保ちます。HTML はプレビューとソースの間で見出し単位に位置を合わせます。
+- **設定画面** — 変更は保存前にその場で反映され、閉じれば元に戻ります。
+  表示倍率・文字サイズ・HTML の既定表示・自動保存の待ち時間・外部変更を見に行く間隔を変えられます。
 
 まだ無いもの: 埋め込み表示・Bases・Canvas（Phase 5）、プラグイン API・Webクリッパ（Phase 6）。
 
@@ -214,8 +225,15 @@ iOS ではアプリの `Documents/Obdisan/` を使います。
 
 ### デスクトップ（Electron）
 
-`src/adapters/node.ts` が用意してあります。レンダラから `fs` は触れないので、
-preload で公開した IPC を `FsBridge` として渡してください。
+Windows 実機で動作確認済みです。
+
+```bash
+npm run electron:dev     # 開発（Vite を別ターミナルで起動しておく）
+npm run electron:build   # インストーラを作る
+```
+
+メインプロセスは `electron/main.cjs`、preload は `electron/preload.cjs` にあります。
+レンダラから `fs` は触れないので、preload で公開した IPC を `FsBridge` として渡す形です。
 
 ```ts
 // レンダラ側
@@ -335,15 +353,19 @@ src/
 │  │  ├─ buildGraph.ts         リンク構造 → グラフ（フォーカス・絞り込み・上限）
 │  │  ├─ layout.ts             d3-force による力学レイアウト
 │  │  └─ types.ts
-│  ├─ settings/Settings.ts     .shiorbit/settings.json
+│  ├─ settings/Settings.ts     .shiorbit/settings.json（範囲検証・プレビュー）
 │  ├─ commands/CommandRegistry.ts
+│  ├─ refactor/                planRename.ts（影響範囲）/ renameLink.ts（書き換え）
 │  └─ notes/                   date.ts（日付書式）/ template.ts（変数展開）
+│                              newDocument.ts（新規作成のパス解決と検査）
 ├─ adapters/                   ← プラットフォーム差分はここだけ
 │  ├─ fsa.ts                   PC ブラウザ（File System Access API）
 │  ├─ capacitor.ts             iOS / Android（@capacitor/filesystem）
+│  ├─ androidSaf.ts            Android の任意フォルダ（Storage Access Framework）
 │  ├─ capacitorKv.ts           モバイルのキャッシュ（アプリ専用領域にファイルで）
 │  ├─ nativeVault.ts           ネイティブ起動時の Vault を開く
 │  ├─ node.ts / nodeFs.ts      Electron / Node（FsBridge 越し）
+│  ├─ electron.ts              Electron のフォルダ選択と記憶
 │  ├─ idb.ts / idbKv.ts        IndexedDB（ハンドル保存・インデックスキャッシュ）
 │  ├─ memory.ts / memoryKv.ts  テスト用・デモ用
 │  └─ detect.ts                実行環境の判定
@@ -361,6 +383,13 @@ src/
    ├─ modalList.ts             検索欄つきモーダル（下の2つで共用）
    ├─ quickSwitcher.ts         Ctrl+O
    ├─ commandPalette.ts        Ctrl+Shift+P
+   ├─ dialog.ts                prompt / confirm の代わり（Electron 対策）
+   ├─ newDocumentDialog.ts     新規作成（種別・名前・作成先の確認）
+   ├─ renameDialog.ts          改名の影響確認
+   ├─ renameController.ts      改名の手順（入力 → 確認 → 書き換え → 再索引）
+   ├─ outlinePane.ts           見出しツリー
+   ├─ rightPane.ts             右ペインの取りまとめ
+   ├─ htmlPreview.ts           HTML の防御的サニタイズと sandbox 描画
    ├─ settingsModal.ts         設定画面
    ├─ mobileToolbar.ts         スマホの Markdown 記号ツールバー
    ├─ mobileNav.ts             スマホのボトムナビ
@@ -456,10 +485,12 @@ runAdapterContract('NodeAdapter (実ファイルシステム)', { create: ... })
   それを超える Vault では、絞り込みか「現在のノートの周辺だけ」をお使いください。
 - Worker が使えない環境では、一度だけ計算した静止グラフになります（内容は同じです）。
 
-- **実機での検証はまだです。** アダプタは契約テストを通っていますが、
+- **モバイル実機での検証はまだです。** アダプタは契約テストを通っていますが、
   権限まわり、iCloud の同期遅延、Android の SAF は実機でしか確かめられません。
-- Android は現状アプリ専用フォルダ固定です（任意フォルダは SAF 対応が必要）。
-- Electron はアダプタとブリッジ定義まで。メインプロセスと preload はまだ書いていません。
+- HTML プレビューの位置合わせは**見出し単位**です。プレビューは opaque origin の
+  サンドボックス内にあり、外からスクロール位置を読めないためです（読めたら防御になりません）。
+  見出しの無い HTML では位置が合わせられません。
+- 表示倍率は CSS の文字サイズに掛かります。余白やアイコンの大きさは変わりません。
 
 ## 次にやること（Phase 5以降）
 
