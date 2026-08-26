@@ -1,5 +1,7 @@
 import type { Indexer } from '../index/Indexer';
+import { parseHtmlLinks } from '../index/scanDocument';
 import { parseLinks } from '../markdown/wikilink';
+import { isHtml } from '../vault/path';
 import type { VaultService } from '../vault/VaultService';
 import type { VPath } from '../vault/types';
 import { renameResolvedLinks, type LinkRewrite } from './renameLink';
@@ -32,8 +34,10 @@ export async function planRename(
   const files: RenameFilePlan[] = [];
   for (const path of candidates) {
     const note = await vault.readNote(path);
-    const refs = parseLinks(note.text).filter((ref) => index.resolve(ref.target, path) === from);
-    const result = renameResolvedLinks(note.text, refs, to);
+    // 参照元が HTML なら href を、Markdown なら [[...]] を読む。
+    const all = isHtml(path) ? parseHtmlLinks(path, note.text) : parseLinks(note.text);
+    const refs = all.filter((ref) => index.resolve(ref.target, path) === from);
+    const result = renameResolvedLinks(note.text, refs, to, path);
     if (result.rewrites.length === 0) continue;
     files.push({
       path,

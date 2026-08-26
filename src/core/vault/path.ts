@@ -65,6 +65,24 @@ export function stripDocumentExtension(p: VPath): string {
   return isSupportedDocument(p) ? p.slice(0, -extname(p).length) : p;
 }
 
+/**
+ * fromDir から to へ辿るための相対パス。
+ * HTML の href のように、ファイルからの相対で書かれた参照を書き直すときに使う。
+ */
+export function relative(fromDir: VPath, to: VPath): string {
+  const base = segments(fromDir);
+  const target = segments(to);
+
+  let common = 0;
+  while (common < base.length && common < target.length - 1 && base[common] === target[common]) {
+    common++;
+  }
+
+  const ups = Array.from({ length: base.length - common }, () => '..');
+  const rest = target.slice(common);
+  return [...ups, ...rest].join('/');
+}
+
 /** parent が child の祖先か (parent === '' はルートなので常に true) */
 export function isAncestor(parent: VPath, child: VPath): boolean {
   const a = normalize(parent);

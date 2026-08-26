@@ -1,5 +1,5 @@
 import type { VPath } from '../vault/types';
-import { dirname, normalize, segments } from '../vault/path';
+import { dirname, normalize, segments, stripDocumentExtension } from '../vault/path';
 
 export interface ResolveTables {
   /** 正規化した実在パス (小文字) -> 実際の VPath */
@@ -25,7 +25,8 @@ export function emptyTables(): ResolveTables {
  * Obsidian と同じく大文字小文字は区別しない。
  */
 export function resolveLink(target: string, from: VPath, tables: ResolveTables): VPath | null {
-  const raw = normalize(target).replace(/\.md$/i, '');
+  // .md だけでなく .html / .htm も落とす（byPath の鍵と揃える）。
+  const raw = stripDocumentExtension(normalize(target));
   if (raw === '') return null;
   const key = raw.toLowerCase();
 
