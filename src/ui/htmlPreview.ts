@@ -5,13 +5,29 @@ const BLOCKED_URL = /^(?:javascript|vbscript|data\s*:\s*text\/html)/i;
 export interface HtmlPreviewOptions {
   /** 表示倍率。1 以外のときだけ文書側へ zoom を差し込む。 */
   zoom?: number;
+  /** 表示直後に送る見出し。scanDocument が数えた順番と同じ番号を渡す。 */
+  headingIndex?: number;
+}
+
+/**
+ * 位置合わせ用に振る id の接頭辞。
+ *
+ * プレビューは opaque origin の iframe なので、外から scrollTop を読み書きできない。
+ * 送れるのはフラグメント（#id）だけなので、見出しに番号つきの id を用意しておく。
+ */
+export const HEADING_ANCHOR_PREFIX = 'shiorbit-h';
+
+export interface SanitizedPreview {
+  html: string;
+  /** 見出しの並び順に対応する id。元から id があるものはそれを使う。 */
+  anchors: string[];
 }
 
 /**
  * HTMLプレビュー用の防御的サニタイズ。
  * iframe sandbox でも実行を止めるが、危険な記述自体も渡さない二重防御にする。
  */
-export function sanitizeHtmlPreview(source: string, options: HtmlPreviewOptions = {}): string {
+export function buildHtmlPreview(source: string, options: HtmlPreviewOptions = {}): SanitizedPreview {
   const doc = new DOMParser().parseFromString(source, 'text/html');
 
   for (const element of doc.querySelectorAll(BLOCKED_ELEMENTS)) element.remove();
@@ -29,8 +45,32 @@ export function sanitizeHtmlPreview(source: string, options: HtmlPreviewOptions 
     }
   }
 
+  const anchors = markHeadings(doc);
   applyZoom(doc, options.zoom ?? 1);
-  return `<!doctype html>\n${doc.documentElement.outerHTML}`;
+  return { html: `<!doctype html>\n${doc.documentElement.outerHTML}`, anchors };
+}
+
+export function sanitizeHtmlPreview(source: string, options: HtmlPreviewOptions = {}): string {
+  return buildHtmlPreview(source, options).html;
+}
+
+/**
+ * 見出しに位置合わせ用の id を振る。
+ * 既に id があるものは書き換えない（文書内リンクを壊さないため）。
+ */
+function markHeadings(doc: Document): string[] {
+  const anchors: string[] = [];
+  doc.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach((heading, index) => {
+    const existing = heading.getAttribute('id');
+    if (existing !== null && existing !== '') {
+      anchors.push(existing);
+      return;
+    }
+    const id = `${HEADING_ANCHOR_PREFIX}${index}`;
+    heading.setAttribute('id', id);
+    anchors.push(id);
+  });
+  return anchors;
 }
 
 /**
@@ -60,7 +100,10 @@ export function createHtmlPreviewFrame(): HTMLIFrameElement {
  * opaque origin の data URL として読み込む。sandboxにはscript権限を与えない。
  */
 export function createHtmlPreviewUrl(source: string, options: HtmlPreviewOptions = {}): string {
-  return `data:text/html;charset=utf-8,${encodeURIComponent(sanitizeHtmlPreview(source, options))}`;
+  const { html, anchors } = buildHtmlPreview(source, options);
+  const url = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+  const anchor = options.headingIndex === undefined ? undefined : anchors[options.headingIndex];
+  return anchor === undefined ? url : `${url}#${encodeURIComponent(anchor)}`;
 }
 
 export function renderHtmlPreview(

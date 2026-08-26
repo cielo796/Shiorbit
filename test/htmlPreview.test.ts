@@ -20,7 +20,8 @@ describe('HTML preview security', () => {
       </body></html>`);
 
     expect(output).toContain('body { color: red; }');
-    expect(output).toContain('<h1>Title</h1>');
+    // 見出しには位置合わせ用の id が付く（本文はそのまま）。
+    expect(output).toContain('<h1 id="shiorbit-h0">Title</h1>');
     expect(output).toContain('src="photo.png"');
     expect(output).not.toMatch(/<script|<iframe|onload|onclick|onerror|javascript:/i);
   });
@@ -38,7 +39,7 @@ describe('HTML preview security', () => {
     const decoded = decodeURIComponent(url.slice(url.indexOf(',') + 1));
     expect(url).toMatch(/^data:text\/html;charset=utf-8,/);
     expect(decoded).toContain('body{color:red}');
-    expect(decoded).toContain('<h1>Preview</h1>');
+    expect(decoded).toContain('<h1 id="shiorbit-h0">Preview</h1>');
     expect(decoded).not.toMatch(/<script|onclick/i);
 
     const frame = createHtmlPreviewFrame();

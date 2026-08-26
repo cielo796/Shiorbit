@@ -7,10 +7,11 @@ import { basename, dirname, isHtml, isMarkdown, isSupportedDocument, normalize }
 import { Indexer } from '../core/index/Indexer';
 import { LIMITS, Settings, clamp } from '../core/settings/Settings';
 import { CommandRegistry } from '../core/commands/CommandRegistry';
+import type { Heading } from '../core/markdown/scan';
 import { dailyPath } from '../core/notes/date';
 import { applyTemplate } from '../core/notes/template';
 import { newDocumentBody } from '../core/notes/newDocument';
-import { MarkdownEditor } from './editor';
+import { MarkdownEditor, type EditorViewState } from './editor';
 import { Explorer } from './explorer';
 import { UnresolvedPane } from './unresolvedPane';
 import { SearchPane } from './searchPane';
@@ -84,6 +85,10 @@ export class App {
   private htmlViewMode: HtmlViewMode = 'preview';
   /** startWatching をやり直すのは間隔が変わったときだけにする。 */
   private watchInterval = 0;
+  /** ノートごとに読んでいた場所。切り替えて戻っても先頭に飛ばされないようにする。 */
+  private readonly viewStates = new Map<VPath, EditorViewState>();
+  /** プレビューに送った見出し番号。ソースへ戻るときの手掛かりにする。 */
+  private previewHeadingIndex = 0;
 
   private els: {
     workspace: HTMLElement;
@@ -389,6 +394,7 @@ export class App {
     this.vault = null;
     this.currentPath = null;
     this.dirty = false;
+    this.viewStates.clear();
     this.renderWelcome();
   }
 
@@ -677,15 +683,17 @@ export class App {
       return;
     }
     if (this.dirty) await this.saveNow();
+    this.rememberViewState();
 
     try {
       const note = await this.vault.readNote(path);
+      const restored = offset === undefined ? this.viewStates.get(path) : undefined;
       this.currentPath = path;
       this.baseMtime = note.mtime;
       this.dirty = false;
       this.editor.setLanguage(isHtml(path) ? 'html' : 'markdown');
-      this.editor.setDoc(note.text);
-      this.rightPane?.setCurrentOffset(offset ?? 0);
+      this.editor.setDoc(note.text, restored);
+      this.rightPane?.setCurrentOffset(offset ?? restored?.anchor ?? 0);
       this.els.emptyNote.style.display = 'none';
       this.els.title.textContent = path;
       this.els.statusPath.textContent = path;
@@ -696,6 +704,7 @@ export class App {
       this.onIndexChanged();
       if (isHtml(path)) {
         this.htmlViewMode = this.settings?.data.htmlDefaultView ?? 'preview';
+        this.previewHeadingIndex = this.headingIndexAt(restored?.anchor ?? 0);
         this.updateHtmlPreview(note.text);
       }
       this.updateDocumentView();
@@ -710,20 +719,69 @@ export class App {
     this.graphModal?.open();
   }
 
+  /**
+   * アウトラインなどからの移動。
+   * HTML のプレビュー中はソースへ切り替えず、プレビューの見出しへ送る。
+   */
   private revealDocumentOffset(offset: number): void {
-    if (isHtml(this.currentPath ?? '') && this.htmlViewMode === 'preview') {
-      this.setHtmlViewMode('source');
-    }
     this.rightPane?.setCurrentOffset(offset);
+
+    if (isHtml(this.currentPath ?? '') && this.htmlViewMode === 'preview') {
+      this.previewHeadingIndex = this.headingIndexAt(offset);
+      if (this.editor) this.updateHtmlPreview(this.editor.getDoc());
+      return;
+    }
     this.editor?.revealOffset(offset);
   }
 
+  /**
+   * プレビューとソースを切り替える。
+   *
+   * プレビューの中は opaque origin なのでスクロール位置を読めない。
+   * 位置合わせは見出し単位に留め、行き先だけを揃える。
+   */
   private setHtmlViewMode(mode: HtmlViewMode): void {
-    if (!isHtml(this.currentPath ?? '')) return;
+    if (!isHtml(this.currentPath ?? '') || !this.editor) return;
+    const editor = this.editor;
+    const previous = this.htmlViewMode;
     this.htmlViewMode = mode;
-    if (mode === 'preview' && this.editor) this.updateHtmlPreview(this.editor.getDoc());
+
+    if (mode === 'preview') {
+      this.rememberViewState();
+      this.previewHeadingIndex = this.headingIndexAt(editor.getViewState().anchor);
+      this.updateHtmlPreview(editor.getDoc());
+    } else if (previous === 'preview') {
+      // display:none の間にスクロール位置が失われるので、明示的に戻す。
+      const heading = this.currentHeadings()[this.previewHeadingIndex];
+      const saved = this.currentPath ? this.viewStates.get(this.currentPath) : undefined;
+      if (heading) editor.revealOffset(heading.offset);
+      else if (saved) editor.setViewState(saved);
+    }
+
     this.updateDocumentView();
-    if (mode === 'source') this.editor?.focus();
+    if (mode === 'source') editor.focus();
+  }
+
+  private currentHeadings(): Heading[] {
+    const path = this.currentPath;
+    if (!path || !this.index) return [];
+    return this.index.getMeta(path)?.headings ?? [];
+  }
+
+  /** offset の直前にある見出しの番号。見出しが無ければ 0。 */
+  private headingIndexAt(offset: number): number {
+    const headings = this.currentHeadings();
+    let index = 0;
+    for (let i = 0; i < headings.length; i++) {
+      if (headings[i]!.offset > offset) break;
+      index = i;
+    }
+    return index;
+  }
+
+  private rememberViewState(): void {
+    if (!this.currentPath || !this.editor) return;
+    this.viewStates.set(this.currentPath, this.editor.getViewState());
   }
 
   private updateDocumentView(): void {
@@ -748,7 +806,10 @@ export class App {
 
   private updateHtmlPreview(source: string): void {
     if (!this.els) return;
-    renderHtmlPreview(this.els.htmlPreview, source, { zoom: this.settings?.data.zoom ?? 1 });
+    renderHtmlPreview(this.els.htmlPreview, source, {
+      zoom: this.settings?.data.zoom ?? 1,
+      headingIndex: this.previewHeadingIndex,
+    });
   }
 
   /** グラフのノードをクリックしたとき。未解決ノードはその場で作れる。 */
@@ -936,7 +997,7 @@ export class App {
       } else {
         const backup = await vault.saveConflictCopy(path, mine);
         const fresh = await vault.readNote(path);
-        this.editor.setDoc(fresh.text);
+        this.editor.setDoc(fresh.text, this.editor.getViewState());
         if (isHtml(path)) this.updateHtmlPreview(fresh.text);
         this.baseMtime = fresh.mtime;
         this.dirty = false;
@@ -1004,6 +1065,7 @@ export class App {
     try {
       await vault.remove(path);
       this.index?.removeNote(path);
+      this.viewStates.delete(path);
       if (this.currentPath === path) this.closeNote();
       await this.refreshTree();
       this.toast(`${path} を削除しました。`);
@@ -1107,7 +1169,7 @@ export class App {
       if (ev.path === this.currentPath) {
         if (!this.dirty) {
           const fresh = await this.vault!.readNote(ev.path);
-          this.editor?.setDoc(fresh.text);
+          this.editor?.setDoc(fresh.text, this.editor.getViewState());
           if (isHtml(ev.path)) this.updateHtmlPreview(fresh.text);
           this.baseMtime = fresh.mtime;
           this.toast('外部の変更を読み込みました。');

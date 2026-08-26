@@ -145,7 +145,10 @@ describe('App の起動', () => {
       .find((heading) => heading.textContent === 'Preview');
     expect(htmlHeading).toBeDefined();
     htmlHeading!.click();
-    expect(editorShell.style.display).toBe('');
+    // プレビューのままで、見出しへのフラグメントだけを送る。
+    expect(editorShell.style.display).toBe('none');
+    expect(preview.style.display).toBe('');
+    expect(preview.src.endsWith('#shiorbit-h0')).toBe(true);
     expect(root.querySelector('.outline-item.active')?.textContent).toBe('Preview');
 
     const sourceMode = [...root.querySelectorAll<HTMLButtonElement>('.html-view-mode')]
@@ -573,5 +576,38 @@ describe('App の起動', () => {
     for (let i = 0; i < 4; i++) await tick();
     expect(document.querySelector('.settings-modal')).toBeNull();
     expect(document.documentElement.style.getPropertyValue('--editor-font-size')).toBe('14.5px');
+  });
+  it('ノートを切り替えて戻ると、読んでいた位置に戻る', async () => {
+    const adapter = new MemoryAdapter('Scroll UI');
+    const long = Array.from({ length: 60 }, (_, i) => `## 見出し ${i}\n\n本文 ${i}`).join('\n\n');
+    await adapter.write('long.md', long);
+    await adapter.write('other.md', '# other');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    const open = async (label: string): Promise<void> => {
+      const row = [...root.querySelectorAll('.tree .row')]
+        .find((node) => node.querySelector('.label')?.textContent === label)!;
+      (row as HTMLElement).click();
+      for (let i = 0; i < 8; i++) await tick();
+    };
+
+    await open('long');
+    // アウトラインの途中の見出しへ移動しておく。
+    const heading = [...root.querySelectorAll<HTMLElement>('.outline-item')]
+      .find((item) => item.textContent === '見出し 30')!;
+    heading.click();
+    for (let i = 0; i < 4; i++) await tick();
+    const moved = root.querySelector('.outline-item.active')?.textContent;
+    expect(moved).toBe('見出し 30');
+
+    await open('other');
+    await open('long');
+
+    // 先頭ではなく、離れたときの位置が復元される。
+    expect(root.querySelector('.outline-item.active')?.textContent).toBe('見出し 30');
   });
 });

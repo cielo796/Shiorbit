@@ -71,6 +71,13 @@ const baseTheme = EditorView.theme(
  *
  * 記法を隠して見た目を整える Live Preview は Phase 2 で扱う (設計書 §7)。
  */
+/** エディタの見え方（カーソルとスクロール位置）。 */
+export interface EditorViewState {
+  anchor: number;
+  head: number;
+  scrollTop: number;
+}
+
 export class MarkdownEditor {
   readonly dom: HTMLElement;
   private readonly view: EditorView;
@@ -136,7 +143,7 @@ export class MarkdownEditor {
   }
 
   /** 外部からの差し替え。onChange は発火しない。 */
-  setDoc(text: string): void {
+  setDoc(text: string, view?: EditorViewState): void {
     this.suppress = true;
     try {
       this.view.dispatch({
@@ -147,6 +154,36 @@ export class MarkdownEditor {
     } finally {
       this.suppress = false;
     }
+    if (view) this.setViewState(view);
+  }
+
+  /**
+   * 読んでいた場所。ノートを切り替えて戻ってきたときに復元する。
+   * 文書が変わっている可能性があるので、復元側で必ず範囲に丸める。
+   */
+  getViewState(): EditorViewState {
+    const { anchor, head } = this.view.state.selection.main;
+    return { anchor, head, scrollTop: this.view.scrollDOM.scrollTop };
+  }
+
+  setViewState(view: EditorViewState): void {
+    const max = this.view.state.doc.length;
+    const anchor = Math.max(0, Math.min(view.anchor, max));
+    const head = Math.max(0, Math.min(view.head, max));
+    this.suppress = true;
+    try {
+      this.view.dispatch({ selection: { anchor, head } });
+    } finally {
+      this.suppress = false;
+    }
+    // 行の高さが確定してからでないと戻せないので、測定のあとにもう一度当てる。
+    this.view.scrollDOM.scrollTop = view.scrollTop;
+    this.view.requestMeasure({
+      read: () => null,
+      write: () => {
+        this.view.scrollDOM.scrollTop = view.scrollTop;
+      },
+    });
   }
 
   getDoc(): string {
