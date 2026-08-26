@@ -60,9 +60,14 @@ export function isBase(p: VPath): boolean {
   return extname(p).toLowerCase() === '.base';
 }
 
+/** ホワイトボード (.canvas)。Obsidian と同じ JSON 形式。 */
+export function isCanvas(p: VPath): boolean {
+  return extname(p).toLowerCase() === '.canvas';
+}
+
 /** ツリーに出す、Shiorbit が開けるファイル。 */
 export function isOpenable(p: VPath): boolean {
-  return isSupportedDocument(p) || isBase(p);
+  return isSupportedDocument(p) || isBase(p) || isCanvas(p);
 }
 
 /** Shiorbit がテキストとして開いて編集できるファイル。 */

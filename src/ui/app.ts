@@ -4,7 +4,7 @@ import type { KeyValueStore } from '../core/storage/KeyValueStore';
 import { VaultService, type VaultEvent } from '../core/vault/VaultService';
 import { ConflictError, isVaultError } from '../core/vault/errors';
 import {
-  basename, dirname, isBase, isHtml, isMarkdown, isOpenable, isSupportedDocument, normalize,
+  basename, dirname, isBase, isCanvas, isHtml, isMarkdown, isOpenable, isSupportedDocument, normalize,
 } from '../core/vault/path';
 import { Indexer } from '../core/index/Indexer';
 import { LIMITS, Settings, clamp } from '../core/settings/Settings';
@@ -15,6 +15,8 @@ import { applyTemplate } from '../core/notes/template';
 import { extractSection } from '../core/markdown/section';
 import { defaultBase, parseBase } from '../core/bases/parse';
 import type { BaseDefinition } from '../core/bases/types';
+import { isCanvasReadable, parseCanvas, stringifyCanvas } from '../core/canvas/parse';
+import type { CanvasData } from '../core/canvas/types';
 import { newDocumentBody } from '../core/notes/newDocument';
 import { MarkdownEditor, type EditorViewState } from './editor';
 import { Explorer } from './explorer';
@@ -40,6 +42,7 @@ import { clearHtmlPreview, createHtmlPreviewFrame, renderHtmlPreview } from './h
 import { confirmDialog } from './dialog';
 import { askNewDocument } from './newDocumentDialog';
 import { BasesView } from './basesView';
+import { CanvasView } from './canvas/CanvasView';
 import { AttachmentUrlCache, isEmbeddableImage } from './embed/attachmentUrl';
 import type { EmbedContent } from './embed/embedWidget';
 
@@ -104,6 +107,9 @@ export class App {
   private basesView: BasesView | null = null;
   /** いま表として開いている .base。エディタで開いているときは null。 */
   private currentBase: BaseDefinition | null = null;
+  private canvasView: CanvasView | null = null;
+  /** いま開いている .canvas。編集すると自動保存に載る。 */
+  private currentCanvas: CanvasData | null = null;
 
   private els: {
     workspace: HTMLElement;
@@ -402,6 +408,8 @@ export class App {
     this.settingsModal = null;
     this.basesView = null;
     this.currentBase = null;
+    this.canvasView = null;
+    this.currentCanvas = null;
     this.graphModal = null;
     this.rightPane = null;
     this.editor = null;
@@ -523,7 +531,13 @@ export class App {
     htmlPreview.style.display = 'none';
     this.basesView = new BasesView({ onOpen: (path) => void this.openNote(path) });
     this.basesView.dom.style.display = 'none';
-    editorHost.append(emptyNote, editor.dom, htmlPreview, this.basesView.dom);
+    this.canvasView = new CanvasView({
+      onChange: (data) => this.onCanvasChange(data),
+      onOpenFile: (file) => void this.followLink(file),
+      loadFile: (file, subpath) => this.loadCanvasFile(file, subpath),
+    });
+    this.canvasView.dom.style.display = 'none';
+    editorHost.append(emptyNote, editor.dom, htmlPreview, this.basesView.dom, this.canvasView.dom);
 
     const toolbar = new MobileToolbar({ editor: () => this.editor });
     this.mobileToolbar = toolbar;
@@ -776,6 +790,10 @@ export class App {
       await this.openBase(path);
       return;
     }
+    if (isCanvas(path)) {
+      await this.openCanvas(path);
+      return;
+    }
     if (!isSupportedDocument(path)) {
       this.toast(`${path} は未対応のファイル形式です。`, true);
       return;
@@ -787,6 +805,7 @@ export class App {
       const note = await this.vault.readNote(path);
       const restored = offset === undefined ? this.viewStates.get(path) : undefined;
       this.currentBase = null;
+      this.currentCanvas = null;
       this.currentPath = path;
       this.baseMtime = note.mtime;
       this.dirty = false;
@@ -846,6 +865,69 @@ export class App {
       this.updateDocumentView();
     } catch (e) {
       this.toast(errorMessage(e), true);
+    }
+  }
+
+  /**
+   * `.canvas` はホワイトボードとして開く。
+   * JSON として読めないファイルは開かない — 空の内容で上書きしてしまうため。
+   */
+  private async openCanvas(path: VPath): Promise<void> {
+    const vault = this.vault;
+    const els = this.els;
+    const canvas = this.canvasView;
+    if (!vault || !els || !canvas) return;
+    if (this.dirty) await this.saveNow();
+    this.rememberViewState();
+
+    try {
+      const file = await vault.readNote(path);
+      if (!isCanvasReadable(file.text)) {
+        this.toast(`${path} は JSON として読めません。開かずにおきます。`, true);
+        return;
+      }
+
+      this.currentPath = path;
+      this.currentBase = null;
+      this.currentCanvas = parseCanvas(file.text);
+      this.baseMtime = file.mtime;
+      this.dirty = false;
+      els.emptyNote.style.display = 'none';
+      els.title.textContent = path;
+      els.statusPath.textContent = path;
+      this.explorer?.setActive(path);
+      this.setSaveState('idle');
+      els.workspace.classList.remove('drawer-open');
+      this.mobileNav?.setActive(null);
+      canvas.setData(this.currentCanvas);
+      this.onIndexChanged();
+      this.updateDocumentView();
+      canvas.fit();
+    } catch (e) {
+      this.toast(errorMessage(e), true);
+    }
+  }
+
+  private onCanvasChange(data: CanvasData): void {
+    this.currentCanvas = data;
+    this.dirty = true;
+    this.setSaveState('dirty');
+    if (this.saveTimer !== null) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => void this.saveNow(), this.settings?.data.autoSaveDelay ?? 500);
+  }
+
+  /** Canvas の file ノードに出す抜粋。 */
+  private async loadCanvasFile(file: string, subpath?: string): Promise<string | null> {
+    const vault = this.vault;
+    if (!vault) return null;
+    const path = this.index?.resolve(file, this.currentPath ?? '') ?? null;
+    if (path === null) return null;
+    try {
+      const note = await vault.readNote(path);
+      const text = subpath === undefined ? note.text : extractSection(note.text, subpath);
+      return text === null ? null : clipEmbed(text, 600);
+    } catch {
+      return null;
     }
   }
 
@@ -924,13 +1006,15 @@ export class App {
     if (!els || !editor) return;
     const hasDocument = this.currentPath !== null;
     const base = this.currentBase !== null;
+    const canvas = this.currentCanvas !== null;
     const html = isHtml(this.currentPath ?? '');
     const preview = html && this.htmlViewMode === 'preview';
 
     els.htmlModes.style.display = html ? '' : 'none';
     els.htmlPreview.style.display = preview ? '' : 'none';
     if (this.basesView) this.basesView.dom.style.display = base ? '' : 'none';
-    editor.dom.style.display = hasDocument && !preview && !base ? '' : 'none';
+    if (this.canvasView) this.canvasView.dom.style.display = canvas ? '' : 'none';
+    editor.dom.style.display = hasDocument && !preview && !base && !canvas ? '' : 'none';
     this.mobileToolbar?.setVisible(hasDocument && isMarkdown(this.currentPath ?? ''));
 
     for (const [mode, modeButton] of els.htmlModeButtons) {
@@ -1090,7 +1174,7 @@ export class App {
     // .base は読み取り専用の表なので、エディタの内容で上書きしない。
     if (!vault || !path || !this.editor || !this.dirty || this.currentBase) return;
 
-    const text = this.editor.getDoc();
+    const text = this.currentCanvas ? stringifyCanvas(this.currentCanvas) : this.editor.getDoc();
     this.setSaveState('saving');
     try {
       this.baseMtime = await vault.writeNote(path, text, this.baseMtime);
@@ -1215,8 +1299,10 @@ export class App {
     if (!this.els || !this.editor) return;
     this.currentPath = null;
     this.currentBase = null;
+    this.currentCanvas = null;
     this.basesView?.setBase(null, []);
     if (this.basesView) this.basesView.dom.style.display = 'none';
+    if (this.canvasView) this.canvasView.dom.style.display = 'none';
     this.dirty = false;
     this.editor.setDoc('');
     this.editor.dom.style.display = 'none';

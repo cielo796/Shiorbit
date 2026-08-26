@@ -176,10 +176,16 @@ HTMLは安全な「プレビュー」が既定表示です。「ソース」に�
   列ヘッダのクリックで並べ替え、行のクリックでそのノートを開きます。
   組み込みの列は `file.name` `file.path` `file.mtime` `file.size` `file.tags` です。
   **v1 は読み取り専用**です（セル編集は入れていません）。
+- **Canvas** — `.canvas`（Obsidian と同じ JSON）をホワイトボードとして開きます。
+  背景のダブルクリックでカードを作り、ドラッグで動かし、右下でリサイズ、
+  カードの四辺に出るポートから他のカードへつなぎます。`Delete` で削除（つながっていた線も消えます）。
+  ホイールで拡大縮小、背景のドラッグで移動。変更は自動保存に載ります。
+  Obsidian で作った `.canvas` はそのまま開け、こちらで開いても Obsidian が付けた色や
+  スタイルは消えません。
 - **設定画面** — 変更は保存前にその場で反映され、閉じれば元に戻ります。
   表示倍率・文字サイズ・HTML の既定表示・自動保存の待ち時間・外部変更を見に行く間隔を変えられます。
 
-まだ無いもの: Canvas（Phase 5）、プラグイン API・Webクリッパ（Phase 6）。
+まだ無いもの: プラグイン API・Webクリッパ（Phase 6）。
 
 ### 境界の答え合わせ
 
@@ -366,6 +372,7 @@ src/
 │  │  ├─ layout.ts             d3-force による力学レイアウト
 │  │  └─ types.ts
 │  ├─ bases/                   types.ts / parse.ts（.base の読み書き）/ query.ts（純粋な問い合わせ）
+│  ├─ canvas/                  types.ts / parse.ts（.canvas の読み書きと防御）
 │  ├─ settings/Settings.ts     .shiorbit/settings.json（範囲検証・プレビュー）
 │  ├─ commands/CommandRegistry.ts
 │  ├─ refactor/                planRename.ts（影響範囲）/ renameLink.ts（書き換え）
@@ -407,6 +414,7 @@ src/
    ├─ rightPane.ts             右ペインの取りまとめ
    ├─ htmlPreview.ts           HTML の防御的サニタイズと sandbox 描画
    ├─ basesView.ts             .base の表（読み取り専用）
+   ├─ canvas/CanvasView.ts     .canvas のホワイトボード（DOM 描画）
    ├─ settingsModal.ts         設定画面
    ├─ mobileToolbar.ts         スマホの Markdown 記号ツールバー
    ├─ mobileNav.ts             スマホのボトムナビ

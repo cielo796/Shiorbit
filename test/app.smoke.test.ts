@@ -698,4 +698,49 @@ describe('App の起動', () => {
     expect(root.querySelector('.main-title')?.textContent).toBe('Books/B.md');
     expect(root.querySelector<HTMLElement>('.bases-view')?.style.display).toBe('none');
   });
+  it('.canvas を開くとカードが並び、追加すると保存される', async () => {
+    const adapter = new MemoryAdapter('Canvas UI');
+    await adapter.write('AI/Ollama.md', '# Ollama');
+    await adapter.write('board.canvas', JSON.stringify({
+      nodes: [
+        { id: 'a1', type: 'text', x: 0, y: 0, width: 260, height: 120, text: '構想' },
+        { id: 'a2', type: 'file', file: 'AI/Ollama.md', x: 320, y: 0, width: 300, height: 200 },
+      ],
+      edges: [{ id: 'e1', fromNode: 'a1', fromSide: 'right', toNode: 'a2', toSide: 'left' }],
+    }));
+
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    const row = [...root.querySelectorAll('.tree .row')]
+      .find((node) => node.querySelector('.label')?.textContent === 'board.canvas')!;
+    (row as HTMLElement).click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    const view = root.querySelector<HTMLElement>('.canvas-view')!;
+    expect(view.style.display).toBe('');
+    expect(view.querySelectorAll('.canvas-node')).toHaveLength(2);
+    // 座標は Obsidian と同じ扱い。
+    const first = view.querySelector<HTMLElement>('[data-node="a1"]')!;
+    expect(first.style.left).toBe('0px');
+    expect(view.querySelector<HTMLElement>('[data-node="a2"]')!.style.left).toBe('320px');
+    expect(view.querySelectorAll('.canvas-edge')).toHaveLength(1);
+    expect(view.querySelector('.canvas-text')).not.toBeNull();
+
+    // file ノードの見出しから元ノートへ移動できる。
+    expect(view.querySelector('.canvas-file-title')?.textContent).toBe('AI/Ollama.md');
+
+    // カードを足すと .canvas に書き戻る（自動保存に載る）。
+    const canvasView = view as HTMLElement & { dispatchEvent: (e: Event) => boolean };
+    canvasView.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    for (let i = 0; i < 20; i++) await tick();
+    await new Promise((r) => setTimeout(r, 600));
+    for (let i = 0; i < 10; i++) await tick();
+
+    const saved = JSON.parse(await adapter.read('board.canvas')) as { nodes: unknown[] };
+    expect(saved.nodes).toHaveLength(3);
+  });
 });

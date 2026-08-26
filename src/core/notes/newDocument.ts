@@ -1,9 +1,13 @@
-import { extname, isBase, isHtml, isMarkdown, isSupportedDocument, join, normalize } from '../vault/path';
+import {
+  extname, isBase, isCanvas, isHtml, isMarkdown, isSupportedDocument, join, normalize,
+} from '../vault/path';
 import type { VPath } from '../vault/types';
 import { defaultBase, stringifyBase } from '../bases/parse';
+import { stringifyCanvas } from '../canvas/parse';
+import { emptyCanvas } from '../canvas/types';
 
 /** 新規作成で選べる種別。folder だけはファイルではなくディレクトリを作る。 */
-export type NewDocumentKind = 'markdown' | 'html' | 'base' | 'folder';
+export type NewDocumentKind = 'markdown' | 'html' | 'base' | 'canvas' | 'folder';
 
 export interface NewDocumentPlan {
   path: VPath;
@@ -15,6 +19,7 @@ const EXTENSIONS: Record<Exclude<NewDocumentKind, 'folder'>, string> = {
   markdown: '.md',
   html: '.html',
   base: '.base',
+  canvas: '.canvas',
 };
 
 /** Windows / macOS のどちらかで使えない文字。作成してから失敗するより先に弾く。 */
@@ -39,6 +44,7 @@ export function resolveNewDocument(
   if (path === '') return null;
   if (kind === 'folder') return { path, kind };
   if (isBase(path)) return { path, kind: 'base' };
+  if (isCanvas(path)) return { path, kind: 'canvas' };
   if (isSupportedDocument(path)) return { path, kind: isHtml(path) ? 'html' : 'markdown' };
 
   return { path: `${path}${EXTENSIONS[kind]}`, kind };
@@ -52,8 +58,8 @@ export function invalidNameReason(name: string): string | null {
   if (normalize(trimmed) === '') return 'その名前では作成できません。';
 
   const ext = extname(trimmed);
-  if (ext !== '' && !isMarkdown(trimmed) && !isHtml(trimmed) && !isBase(trimmed)) {
-    return '拡張子は .md / .html / .htm / .base のいずれかにしてください。';
+  if (ext !== '' && !isMarkdown(trimmed) && !isHtml(trimmed) && !isBase(trimmed) && !isCanvas(trimmed)) {
+    return '拡張子は .md / .html / .htm / .base / .canvas のいずれかにしてください。';
   }
   return null;
 }
@@ -61,6 +67,7 @@ export function invalidNameReason(name: string): string | null {
 /** 新規ファイルの初期内容。開いた直後に書き始められる形にする。 */
 export function newDocumentBody(kind: NewDocumentKind, title: string): string {
   if (kind === 'base') return stringifyBase(defaultBase(title));
+  if (kind === 'canvas') return stringifyCanvas(emptyCanvas());
   if (kind !== 'html') return `# ${title}\n\n`;
 
   return [

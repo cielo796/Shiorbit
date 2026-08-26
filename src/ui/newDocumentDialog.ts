@@ -14,6 +14,7 @@ const KINDS: Array<{ id: NewDocumentKind; label: string }> = [
   { id: 'markdown', label: 'Markdown' },
   { id: 'html', label: 'HTML' },
   { id: 'base', label: 'Base' },
+  { id: 'canvas', label: 'Canvas' },
   { id: 'folder', label: 'フォルダ' },
 ];
 

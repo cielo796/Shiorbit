@@ -1,5 +1,5 @@
 import type { Entry, VPath } from '../core/vault/types';
-import { basename, dirname, isBase, isHtml, isMarkdown } from '../core/vault/path';
+import { basename, dirname, isBase, isCanvas, isHtml, isMarkdown } from '../core/vault/path';
 
 export type ExplorerFilter = 'all' | 'markdown' | 'html';
 
@@ -132,7 +132,7 @@ export class Explorer {
   private matchesFilter(path: VPath): boolean {
     if (this.filter === 'markdown') return isMarkdown(path);
     if (this.filter === 'html') return isHtml(path);
-    return isMarkdown(path) || isHtml(path) || isBase(path);
+    return isMarkdown(path) || isHtml(path) || isBase(path) || isCanvas(path);
   }
 
   private updateFilterButtons(): void {
@@ -177,7 +177,7 @@ export class Explorer {
       });
     } else {
       caret.textContent = '';
-      icon.textContent = isBase(node.path) ? '📊' : '📄';
+      icon.textContent = isBase(node.path) ? '📊' : isCanvas(node.path) ? '🗺' : '📄';
       row.addEventListener('click', () => this.opts.onOpen(node.path));
     }
 

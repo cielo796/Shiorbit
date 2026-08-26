@@ -528,6 +528,75 @@ mark { background: rgba(167, 139, 250, .3); color: inherit; border-radius: 2px; 
   .settings-vault-actions { flex-wrap: wrap; }
 }
 
+/* ------------------------------------------------------------------ Canvas */
+
+.canvas-view {
+  position: relative; height: 100%; overflow: hidden;
+  background:
+    radial-gradient(circle, var(--border) 1px, transparent 1px) 0 0 / 24px 24px;
+  cursor: grab; touch-action: none; outline: none;
+}
+.canvas-view:active { cursor: grabbing; }
+.canvas-world { position: absolute; inset: 0; transform-origin: 0 0; }
+.canvas-edges { position: absolute; overflow: visible; pointer-events: none; }
+.canvas-edge { fill: none; stroke: var(--accent-dim); stroke-width: 2; }
+.canvas-nodes { position: absolute; inset: 0; }
+
+.canvas-node {
+  position: absolute; display: flex; flex-direction: column;
+  background: var(--bg-elev); border: 1px solid var(--node-color, var(--border));
+  border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, .25);
+  cursor: move; overflow: hidden;
+}
+.canvas-node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+.canvas-node-group { background: transparent; border-style: dashed; }
+
+.canvas-text {
+  flex: 1; width: 100%; resize: none; border: none; outline: none;
+  background: transparent; color: var(--fg); font: inherit;
+  font-size: calc(var(--ui-font-size) * 0.9286); line-height: 1.6; padding: 8px 10px;
+}
+.canvas-file { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.canvas-file-title {
+  flex: none; text-align: left; background: var(--bg-active); border: none;
+  border-bottom: 1px solid var(--border); color: var(--accent);
+  font: inherit; font-size: calc(var(--ui-font-size) * 0.8571);
+  padding: 6px 10px; cursor: pointer; overflow: hidden; text-overflow: ellipsis;
+}
+.canvas-file-body {
+  flex: 1; min-height: 0; overflow: auto; white-space: pre-wrap;
+  padding: 8px 10px; color: var(--fg-dim);
+  font-size: calc(var(--ui-font-size) * 0.8571); line-height: 1.6;
+}
+.canvas-link {
+  padding: 8px 10px; color: var(--accent); overflow-wrap: anywhere;
+  font-size: calc(var(--ui-font-size) * 0.8571);
+}
+.canvas-group-label {
+  padding: 6px 10px; color: var(--fg-faint); font-size: calc(var(--ui-font-size) * 0.8571);
+}
+
+.canvas-resize {
+  position: absolute; right: 0; bottom: 0; width: 14px; height: 14px;
+  cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, var(--border) 50%);
+}
+.canvas-port {
+  position: absolute; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--bg); border: 1.5px solid var(--accent-dim);
+  opacity: 0; cursor: crosshair;
+}
+.canvas-node:hover .canvas-port, .canvas-node.selected .canvas-port { opacity: 1; }
+.canvas-port-top { top: -5px; left: calc(50% - 5px); }
+.canvas-port-bottom { bottom: -5px; left: calc(50% - 5px); }
+.canvas-port-left { left: -5px; top: calc(50% - 5px); }
+.canvas-port-right { right: -5px; top: calc(50% - 5px); }
+
+.canvas-hint {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  color: var(--fg-faint); font-size: calc(var(--ui-font-size) * 0.8571);
+  pointer-events: none; text-align: center; line-height: 1.8;
+}
+
 /* ------------------------------------------------------------------- Bases */
 
 .bases-view { height: 100%; display: flex; flex-direction: column; min-height: 0; }
