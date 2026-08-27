@@ -5,6 +5,9 @@ import { VaultService } from '../core/vault/VaultService';
 import { isMarkdown } from '../core/vault/path';
 import { Indexer } from '../core/index/Indexer';
 import { LIMITS, Settings } from '../core/settings/Settings';
+import {
+  LAYOUT_PATH, isEmptyLayout, normalizeLayout, parseLayout, serializeLayout,
+} from '../core/settings/workspaceLayout';
 import { CommandRegistry } from '../core/commands/CommandRegistry';
 import { MarkdownEditor } from './editor';
 import { QuickSwitcher } from './quickSwitcher';
@@ -33,7 +36,9 @@ import { Toaster } from './toaster';
 import { createHtmlPreviewFrame } from './htmlPreview';
 import { confirmDialog } from './dialog';
 import { BasesView } from './basesView';
-import { DocumentArea } from './documentArea';
+import type { DocumentArea } from './documentArea';
+import { DocumentPane } from './documentPane';
+import { WorkspacePanes, type OpenTarget } from './workspacePanes';
 import type { DocumentMode, DocumentSurfaces } from './views/DocumentView';
 import { CanvasView } from './canvas/CanvasView';
 import { EmbedResolver } from './embed/embedResolver';
@@ -78,12 +83,12 @@ export class App {
   private mobileNav: MobileNav | null = null;
   private mobileToolbar: MobileToolbar | null = null;
 
-  private area: DocumentArea | null = null;
-  /** 面（CodeMirror など）は Vault ごとに1組。DocumentArea が使い分ける。 */
-  private surfaces: DocumentSurfaces | null = null;
+  /** ペイン一式。分割していなければ1つ。 */
+  private workspacePanes: WorkspacePanes | null = null;
   private currentTab: Tab = 'files';
   /** startWatching をやり直すのは間隔が変わったときだけにする。 */
   private watchInterval = 0;
+  private layoutTimer: ReturnType<typeof setTimeout> | null = null;
   /** ![[...]] と Canvas の file ノードの中身。ObjectURL の解放もここが持つ。 */
   private embeds: EmbedResolver | null = null;
 
@@ -93,18 +98,25 @@ export class App {
 
   /** いま開いている文書。開いていなければ null。 */
   private get currentPath(): VPath | null {
-    return this.area?.path ?? null;
+    return this.workspacePanes?.path ?? null;
+  }
+
+
+
+  /** いま操作しているペインのドキュメント領域。 */
+  private get area(): DocumentArea | null {
+    return this.workspacePanes?.active.area ?? null;
   }
 
   private get editor(): MarkdownEditor | null {
-    return this.surfaces?.editor ?? null;
+    return this.area?.surfaces.editor ?? null;
   }
 
 
   /** エディタから見た「いま何が解決できるか」。Indexer を UI の外へ露出させない。 */
   private readonly wikilinks: WikilinkProvider = {
     isResolved: (target) => this.index?.resolve(target, this.currentPath ?? '') != null,
-    follow: (target) => void this.followLink(target),
+    follow: (target, aside) => void this.followLink(target, aside),
     embeds: {
       resolve: (target, subpath) => this.embeds?.resolve(target, subpath) ?? Promise.resolve(null),
       open: (target) => void this.followLink(target),
@@ -199,6 +211,15 @@ export class App {
       toggleLivePreview: () => this.settings?.update({ livePreview: !this.settings.data.livePreview }),
       toggleTheme: () => this.settings?.update({ theme: this.settings.data.theme === 'dark' ? 'light' : 'dark' }),
       openGraph: () => this.openGraph(),
+      closeTab: () => this.workspacePanes?.active.close(),
+      nextTab: () => this.workspacePanes?.active.cycle(1),
+      previousTab: () => this.workspacePanes?.active.cycle(-1),
+      toggleSplit: () => this.workspacePanes?.toggleSplit(),
+      focusOtherPane: () => this.workspacePanes?.focusOther(),
+      openInOtherPane: () => {
+        const path = this.currentPath;
+        if (path !== null) void this.openDocument(path, undefined, 'other');
+      },
       openSettings: () => this.settingsModal?.open(),
       zoomIn: () => this.shortcuts.zoomBy(LIMITS.zoom.step),
       zoomOut: () => this.shortcuts.zoomBy(-LIMITS.zoom.step),
@@ -304,6 +325,9 @@ export class App {
       this.toast(`インデックスを ${report.ms}ms で復元しました（再利用 ${report.reused} / 再読込 ${report.scanned}）。`);
     }
 
+    // 索引ができてから開き直す。リンクの色分けが最初から正しく出るように。
+    await this.restoreLayout();
+
     vault.on((ev) => void this.sync.handle(ev));
     this.watchInterval = this.settings.data.pollInterval;
     vault.startWatching({ intervalMs: this.watchInterval });
@@ -361,16 +385,14 @@ export class App {
     this.settingsModal?.close();
     this.graphModal?.close();
     this.rightPane?.destroy();
-    this.area?.destroy();
-    this.surfaces?.editor.destroy();
+    this.workspacePanes?.destroy();
     this.index?.dispose();
     this.vault?.dispose();
 
     this.settingsModal = null;
     this.graphModal = null;
     this.rightPane = null;
-    this.area = null;
-    this.surfaces = null;
+    this.workspacePanes = null;
     this.panes = null;
     this.mobileNav = null;
     this.mobileToolbar = null;
@@ -403,11 +425,15 @@ export class App {
     this.mobileNav = chrome.mobileNav;
 
     this.buildPanes();
-    this.buildDocumentArea(vault, settings.data.showLineNumbers, chrome.modes);
+    this.workspacePanes = new WorkspacePanes({
+      createPane: (onFocus, onTabsChanged) =>
+        this.buildPane(vault, settings.data.showLineNumbers, chrome.modes, onFocus, onTabsChanged),
+      onChanged: () => this.onPanesChanged(),
+    });
 
     const toolbar = new MobileToolbar({ editor: () => this.editor });
     this.mobileToolbar = toolbar;
-    chrome.main.append(this.area!.dom, toolbar.dom);
+    chrome.main.append(this.workspacePanes.dom, toolbar.dom);
 
     this.rightPane = new RightPane({
       onOpen: (path, offset) => void this.openDocument(path, offset),
@@ -453,16 +479,30 @@ export class App {
     });
   }
 
-  /** 面を1組作り、DocumentArea に預ける。 */
-  private buildDocumentArea(vault: VaultService, showLineNumbers: boolean, modes: HTMLElement): void {
+  /**
+   * ペインを1つ作る。面（CodeMirror など）はペインごとに1組。
+   * CodeMirror は1つの状態を複数 View で共有できないので、
+   * 2つのノートを並べるには面も2組要る。
+   */
+  private buildPane(
+    vault: VaultService,
+    showLineNumbers: boolean,
+    modes: HTMLElement,
+    onFocus: () => void,
+    onTabsChanged: () => void,
+  ): DocumentPane {
+    let self: DocumentPane | null = null;
+    const isActive = (): boolean => self !== null && this.workspacePanes?.active === self;
     const isLivePreview = (): boolean =>
-      isMarkdown(this.currentPath ?? '') && (this.settings?.data.livePreview ?? false);
+      isMarkdown(self?.path ?? '') && (this.settings?.data.livePreview ?? false);
 
-    this.surfaces = {
+    const surfaces: DocumentSurfaces = {
       editor: new MarkdownEditor({
-        onChange: () => this.area?.markDirty(),
-        onSave: () => void this.area?.saveNow(),
-        onPositionChange: (offset) => this.rightPane?.setCurrentOffset(offset),
+        onChange: () => self?.area.markDirty(),
+        onSave: () => void self?.area.saveNow(),
+        onPositionChange: (offset) => {
+          if (isActive()) this.rightPane?.setCurrentOffset(offset);
+        },
         showLineNumbers,
         extensions: [
           livePreview(isLivePreview),
@@ -480,18 +520,28 @@ export class App {
       }),
     };
 
-    this.area = new DocumentArea({
+    self = new DocumentPane({
       vault,
       index: () => this.index,
       settings: () => this.settings!.data,
-      surfaces: this.surfaces,
+      surfaces,
       placeholder: el('div', 'empty-note',
         'ツリーからノートを開くか、「+」で作成します（Ctrl+O でも切り替えられます）'),
-      onSaveState: (state) => this.chrome?.setSaveState(state),
-      onChanged: () => this.onDocumentChanged(),
-      onModesChanged: (list, active) => this.renderModes(modes, list, active),
+      onSaveState: (state) => {
+        if (isActive()) this.chrome?.setSaveState(state);
+        self?.refreshTabs();
+      },
+      onChanged: () => {
+        if (isActive()) this.onDocumentChanged();
+      },
+      onModesChanged: (list, active) => {
+        if (isActive()) this.renderModes(modes, list, active);
+      },
       toast: (message, isError) => this.toast(message, isError),
+      onFocus,
+      onTabsChanged,
     });
+    return self;
   }
 
   private setTab(tab: Tab): void {
@@ -601,12 +651,56 @@ export class App {
    * 文書を開く。種類ごとの違いは DocumentArea の中の View が引き受ける。
    * App は「どれを開くか」と「開いた結果を周りへ伝えること」だけを知る。
    */
-  private async openDocument(path: VPath, offset?: number): Promise<void> {
-    if (!this.area || !this.chrome) return;
-    const opened = await this.area.open(path, offset);
-    if (!opened) return;
+  private async openDocument(path: VPath, offset?: number, target: OpenTarget = 'active'): Promise<void> {
+    const panes = this.workspacePanes;
+    if (!panes || !this.chrome) return;
+    await panes.open(path, offset, target);
     this.chrome.setDrawerOpen(false);
     this.mobileNav?.setActive(null);
+  }
+
+  /** タブ・分割・選択が変わった。開き直したときに同じ形へ戻せるよう覚えておく。 */
+  private onPanesChanged(): void {
+    this.workspacePanes?.refreshTabs();
+    this.onDocumentChanged();
+    this.scheduleLayoutSave();
+  }
+
+  /**
+   * 構成の保存はまとめて後回しにする。
+   * タブ操作1回で何度も呼ばれるうえ、Vault へのファイル書き込みになるため。
+   */
+  private scheduleLayoutSave(): void {
+    if (this.layoutTimer !== null) clearTimeout(this.layoutTimer);
+    this.layoutTimer = setTimeout(() => void this.saveLayout(), 800);
+  }
+
+  private async saveLayout(): Promise<void> {
+    const vault = this.vault;
+    const panes = this.workspacePanes;
+    if (!vault || !panes) return;
+
+    const layout = normalizeLayout(panes.serialize());
+    try {
+      await vault.writeNote(LAYOUT_PATH, serializeLayout(layout));
+    } catch {
+      // 構成が保存できなくてもノートには影響しない。黙って諦める。
+    }
+  }
+
+  /** 前回開いていたタブと分割を復元する。失敗しても起動は続ける。 */
+  private async restoreLayout(): Promise<void> {
+    const vault = this.vault;
+    const panes = this.workspacePanes;
+    if (!vault || !panes) return;
+
+    try {
+      const stored = parseLayout((await vault.readNote(LAYOUT_PATH)).text);
+      if (isEmptyLayout(stored)) return;
+      await panes.restore(stored);
+    } catch {
+      /* 初回起動では存在しない */
+    }
   }
 
   /** 開いている文書が変わった / 表示が切り替わった。 */
@@ -658,9 +752,9 @@ export class App {
     else await this.openDocument(id);
   }
 
-  private async followLink(target: string): Promise<void> {
+  private async followLink(target: string, aside = false): Promise<void> {
     const resolved = this.index?.resolve(target, this.currentPath ?? '') ?? null;
-    if (resolved) await this.openDocument(resolved);
+    if (resolved) await this.openDocument(resolved, undefined, aside ? 'other' : 'active');
     else await this.creator.fromName(target);
   }
 

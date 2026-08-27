@@ -78,6 +78,11 @@ export class DocumentArea {
     return this.view?.path ?? null;
   }
 
+  /** この領域が使っている面。ペインごとに別の組になる。 */
+  get surfaces(): DocumentSurfaces {
+    return this.opts.surfaces;
+  }
+
   get isDirty(): boolean {
     return this.dirty;
   }

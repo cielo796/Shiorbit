@@ -25,7 +25,8 @@ export interface WikilinkSuggestion {
  */
 export interface WikilinkProvider {
   isResolved: (target: string) => boolean;
-  follow: (target: string) => void;
+  /** aside=true なら隣のペインで開く（Ctrl+Alt+クリック） */
+  follow: (target: string, aside?: boolean) => void;
   suggest: () => WikilinkSuggestion[];
   /** ![[...]] の中身。省略すると埋め込みは記法のまま表示される。 */
   embeds?: EmbedProvider;
@@ -235,7 +236,7 @@ export function wikilinkExtension(provider: WikilinkProvider, options: WikilinkO
         const target = linkAt(view.state, pos) ?? linkAt(view.state, pos + 2);
         if (target === null) return false;
         event.preventDefault();
-        provider.follow(target);
+        provider.follow(target, event.altKey);
         return true;
       },
     }),

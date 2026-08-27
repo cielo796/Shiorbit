@@ -11,6 +11,12 @@ export interface AppCommandActions {
   toggleLivePreview: () => void | Promise<void>;
   toggleTheme: () => void | Promise<void>;
   openGraph: () => void;
+  closeTab: () => void | Promise<void>;
+  nextTab: () => void | Promise<void>;
+  previousTab: () => void | Promise<void>;
+  toggleSplit: () => void;
+  focusOtherPane: () => void;
+  openInOtherPane: () => void | Promise<void>;
   openSettings: () => void;
   zoomIn: () => void | Promise<void>;
   zoomOut: () => void | Promise<void>;
@@ -37,6 +43,17 @@ export function registerAppCommands(
     { id: 'toggle-live-preview', name: 'Live Preview を切り替える', run: actions.toggleLivePreview },
     { id: 'toggle-theme', name: 'テーマを切り替える（ダーク / ライト）', run: actions.toggleTheme },
     { id: 'graph', name: 'グラフを開く', hotkey: 'Ctrl+G', run: actions.openGraph },
+    { id: 'close-tab', name: 'タブを閉じる', hotkey: 'Ctrl+W', run: actions.closeTab, available: actions.hasCurrentNote },
+    { id: 'next-tab', name: '次のタブ', hotkey: 'Ctrl+Tab', run: actions.nextTab },
+    { id: 'previous-tab', name: '前のタブ', hotkey: 'Ctrl+Shift+Tab', run: actions.previousTab },
+    { id: 'toggle-split', name: '画面を分割する / 戻す', hotkey: 'Ctrl+\\', run: actions.toggleSplit },
+    { id: 'focus-other-pane', name: 'もう片方のペインへ移る', run: actions.focusOtherPane },
+    {
+      id: 'open-in-other-pane',
+      name: 'このノートを隣のペインで開く',
+      available: actions.hasCurrentNote,
+      run: actions.openInOtherPane,
+    },
     { id: 'settings', name: '設定を開く', run: actions.openSettings },
     { id: 'zoom-in', name: '表示を拡大する', hotkey: 'Ctrl++', run: actions.zoomIn },
     { id: 'zoom-out', name: '表示を縮小する', hotkey: 'Ctrl+-', run: actions.zoomOut },

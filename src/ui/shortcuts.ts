@@ -26,6 +26,13 @@ export class Shortcuts {
     if (!(event.ctrlKey || event.metaKey) || !this.opts.active()) return;
     const key = event.key.toLowerCase();
 
+    // Ctrl+Tab はタブの巡回。Shift の有無で向きが変わる。
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      void this.opts.commands.run(event.shiftKey ? 'previous-tab' : 'next-tab');
+      return;
+    }
+
     if (event.shiftKey) {
       if (key === 'p') {
         event.preventDefault();
@@ -48,6 +55,16 @@ export class Shortcuts {
     if (key === 'o' || key === 'p') {
       event.preventDefault();
       this.opts.openQuickSwitcher();
+      return;
+    }
+    if (key === 'w') {
+      event.preventDefault();
+      void this.opts.commands.run('close-tab');
+      return;
+    }
+    if (key === '\\') {
+      event.preventDefault();
+      void this.opts.commands.run('toggle-split');
       return;
     }
 

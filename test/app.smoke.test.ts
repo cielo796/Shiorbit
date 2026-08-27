@@ -784,4 +784,85 @@ describe('App の起動', () => {
     expect(await adapter.read('AI/Ollama.md')).toBe('# Ollama');
     expect(root.querySelector('.cleanup-row')).toBeNull();
   });
+  it('複数のノートをタブで開き、閉じて隣へ移る', async () => {
+    const adapter = new MemoryAdapter('Tabs UI');
+    await adapter.write('a.md', '# A');
+    await adapter.write('b.md', '# B');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    const open = async (label: string): Promise<void> => {
+      const row = [...root.querySelectorAll('.tree .row')]
+        .find((node) => node.querySelector('.label')?.textContent === label)!;
+      (row as HTMLElement).click();
+      for (let i = 0; i < 10; i++) await tick();
+    };
+
+    // 1枚だけのときは帯を出さない。
+    await open('a');
+    expect(root.querySelector<HTMLElement>('.tab-strip')?.style.display).toBe('none');
+
+    await open('b');
+    const tabs = (): string[] =>
+      [...root.querySelectorAll('.tab-item .tab-label')].map((node) => node.textContent!);
+    expect(tabs()).toEqual(['a', 'b']);
+    expect(root.querySelector('.tab-item.active .tab-label')?.textContent).toBe('b');
+    expect(root.querySelector('.main-title')?.textContent).toBe('b.md');
+
+    // タブをクリックすると切り替わる。
+    [...root.querySelectorAll('.tab-item')]
+      .find((item) => item.textContent?.startsWith('a'))!
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+    for (let i = 0; i < 10; i++) await tick();
+    expect(root.querySelector('.main-title')?.textContent).toBe('a.md');
+
+    // ✕ で閉じると、残ったタブへ移る。1枚になったので帯はまた消える。
+    root.querySelector<HTMLButtonElement>('.tab-item.active .tab-close')!.click();
+    for (let i = 0; i < 12; i++) await tick();
+    expect(tabs()).toEqual(['b']);
+    expect(root.querySelector<HTMLElement>('.tab-strip')?.style.display).toBe('none');
+    expect(root.querySelector('.main-title')?.textContent).toBe('b.md');
+  });
+
+  it('画面を分割して2つのノートを並べ、構成を保存する', async () => {
+    const adapter = new MemoryAdapter('Split UI');
+    await adapter.write('a.md', '# A');
+    await adapter.write('b.md', '# B');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    const rowFor = (label: string): HTMLElement =>
+      [...root.querySelectorAll('.tree .row')]
+        .find((node) => node.querySelector('.label')?.textContent === label)! as HTMLElement;
+
+    rowFor('a').click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    // Ctrl+\ で分割。
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '\\', ctrlKey: true }));
+    for (let i = 0; i < 8; i++) await tick();
+    expect(root.querySelectorAll('.document-pane')).toHaveLength(2);
+    expect(root.querySelector('.document-panes')?.classList.contains('split')).toBe(true);
+
+    rowFor('b').click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    // 分割後は2枚のエディタが並ぶ。
+    expect(root.querySelectorAll('.cm-editor')).toHaveLength(2);
+
+    // 構成が Vault に残る。
+    await new Promise((r) => setTimeout(r, 1000));
+    for (let i = 0; i < 10; i++) await tick();
+    const saved = JSON.parse(await adapter.read('.shiorbit/workspace.json')) as {
+      panes: Array<{ tabs: string[] }>;
+    };
+    expect(saved.panes).toHaveLength(2);
+    expect(saved.panes.flatMap((pane) => pane.tabs).sort()).toEqual(['a.md', 'b.md']);
+  });
 });

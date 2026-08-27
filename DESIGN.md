@@ -418,7 +418,8 @@ ViewPlugin + Decoration
 | **5. 拡張** | 負債返済（アウトライン・リネーム追従・埋め込み）＋ Bases ＋ Canvas | `.base` と `.canvas` が読み書きでき、リネームでリンクが壊れない | **完了**（アウトライン・リネーム追従・既存機能の完成・埋め込み・Bases・Canvas）→ [PHASE5.md](./PHASE5.md) |
 | **6. 品質と安全** | Vault名の確定、ごみ箱、競合の差分表示、CSP、DocumentView 抽出 | 削除が復元でき、`app.ts` が 700 行以下 | **完了**（app.ts 1,503→696行 / テスト300件）→ [ROADMAP.md](./ROADMAP.md) |
 | **7. スケール** | 計測基盤、ポーリング間引き、スニペットの遅延化 | 1万ノートで起動1秒・保存反映100ms・検索200ms | **完了**（実測 435ms / 87ms / 15ms、CI で毎回計測）→ [ROADMAP.md](./ROADMAP.md) |
-| **8〜10** | ワークスペース / モバイル出荷 / 開放 | → [ROADMAP.md](./ROADMAP.md) | 未着手。旧「Phase 6（開放）」は Phase 10 へ |
+| **8. ワークスペース** | タブ、縦2分割、構成の復元 | 2ノートを並べて編集・参照できる | **完了**（§8 の PC レイアウトが揃った）→ [ROADMAP.md](./ROADMAP.md) |
+| **9〜10** | モバイル出荷 / 開放 | → [ROADMAP.md](./ROADMAP.md) | 未着手。旧「Phase 6（開放）」は Phase 10 へ |
 
 > Phase 5 は当初「Bases / Canvas / プラグインAPI / Webクリッパ」の4本立てでしたが、
 > プラグインAPIは公開後に締められないためセキュリティ設計を先に要すること、
