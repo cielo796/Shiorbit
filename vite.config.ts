@@ -7,8 +7,8 @@ import { defineConfig, type Plugin } from 'vite';
  */
 const DEV_CSP = [
   "default-src 'self'",
-  "img-src 'self' blob: data:",
-  "media-src 'self' blob: data:",
+  "img-src 'self' blob: data: https:",
+  "media-src 'self' blob: data: https:",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",

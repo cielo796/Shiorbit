@@ -30,6 +30,9 @@ describe('Content-Security-Policy', () => {
     // 埋め込み画像は ObjectURL、アイコンは data: URL。
     expect(directive('img-src')).toContain('blob:');
     expect(directive('img-src')).toContain('data:');
+    // 利用者が HTML に書いた外部画像（設計書 §11 の例外）。
+    // プレビューは data: URL なので親の CSP を継承する。ここを閉じると画像が全部消える。
+    expect(directive('img-src')).toContain('https:');
     // HTML プレビューは data: URL の sandbox iframe。
     expect(directive('frame-src')).toContain('data:');
     // グラフの力学計算は Worker。
@@ -39,8 +42,11 @@ describe('Content-Security-Policy', () => {
   });
 
   it('外部への送信口を開けていない', () => {
+    // 画像は取りに行けるが、スクリプトと通信は閉じたまま。
+    // XSS を踏んでも、外部へデータを送る手段は残らない。
     expect(directive('connect-src')).not.toContain('https:');
     expect(directive('connect-src')).not.toContain('*');
     expect(directive('default-src')).not.toContain('*');
+    expect(directive('script-src')).not.toContain('https:');
   });
 });

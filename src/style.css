@@ -82,7 +82,16 @@ button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transpar
   height: 100%;
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr var(--rightbar-w);
-  grid-template-rows: 1fr auto;
+  /*
+   * minmax(0, 1fr) であって 1fr ではない。
+   *
+   * 1fr は minmax(auto, 1fr) と同じで、行の最小サイズが「中身の最小サイズ」になる。
+   * HTML プレビューの iframe は中身の高さまで伸びるので、そのままだと
+   * 長いページを開いた瞬間に行が数万 px まで広がり、body は overflow:hidden なので
+   * 画面外が切り落とされて**どこもスクロールできなくなる**。
+   * 0 を下限にしておくと行が画面に収まり、iframe が自分の中でスクロールする。
+   */
+  grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas: 'side main right' 'status status status';
 }
 
