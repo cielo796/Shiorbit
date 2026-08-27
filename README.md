@@ -264,8 +264,21 @@ Windows 実機で動作確認済みです。
 
 ```bash
 npm run electron:dev     # 開発（Vite を別ターミナルで起動しておく）
-npm run electron:build   # インストーラを作る
+npm run electron:build   # インストーラを作る（release/Shiorbit Setup <version>.exe）
 ```
+
+インストーラは**ユーザー単位**（管理者権限なし）で `%LOCALAPPDATA%\Programs\Shiorbit` に入り、
+デスクトップとスタートメニューにショートカットを作ります。画面を出さずに入れるなら:
+
+```bash
+"release/Shiorbit Setup 0.2.0.exe" /S
+```
+
+同じバージョンを入れ直すときは、先に `Uninstall Shiorbit.exe /S` を実行してください
+（NSIS は同一バージョンだと差し替えないことがあります）。
+アンインストールしても Vault と設定は残ります。
+
+署名していないので、初回は SmartScreen の警告が出ます（設計書 §16）。
 
 メインプロセスは `electron/main.cjs`、preload は `electron/preload.cjs` にあります。
 レンダラから `fs` は触れないので、preload で公開した IPC を `FsBridge` として渡す形です。
