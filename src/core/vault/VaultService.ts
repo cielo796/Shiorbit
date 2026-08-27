@@ -4,6 +4,7 @@ import { ConflictError, isVaultError } from './errors';
 import {
   basename, dirname, isAncestor, isHidden, isMarkdown, isOpenable, isSupportedDocument, join, segments,
 } from './path';
+import { conflictPathFor, formatConflictStamp, isConflictCopy } from './conflict';
 import {
   TRASH_DIR,
   collectTrashEntries,
@@ -282,15 +283,16 @@ export class VaultService {
    * どちらを選んでも、失われる側は必ずファイルとして残す (設計書 §9)。
    */
   async saveConflictCopy(path: VPath, text: string): Promise<VPath> {
-    const stamp = formatStamp(new Date());
-    const dot = path.lastIndexOf('.');
-    const target =
-      dot > 0
-        ? `${path.slice(0, dot)}.conflict-${stamp}${path.slice(dot)}`
-        : `${path}.conflict-${stamp}`;
+    const target = conflictPathFor(path, formatConflictStamp(new Date()));
     await this.adapter.write(target, text);
     this.emit({ type: 'create', path: target });
     return target;
+  }
+
+  /** 退避した競合ファイルの一覧。片付けの導線に使う。 */
+  async listConflicts(): Promise<VPath[]> {
+    const all = await this.listAll();
+    return all.filter((entry) => entry.kind === 'file' && isConflictCopy(entry.path)).map((e) => e.path);
   }
 
   // --------------------------------------------------------------- watching
@@ -388,9 +390,4 @@ export class VaultService {
 function compareEntries(a: Entry, b: Entry): number {
   if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
   return a.path.localeCompare(b.path, 'ja', { numeric: true, sensitivity: 'base' });
-}
-
-function formatStamp(d: Date): string {
-  const p = (n: number, w = 2) => String(n).padStart(w, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
 }

@@ -775,13 +775,13 @@ describe('App の起動', () => {
       .find((b) => b.textContent === 'ごみ箱')!.click();
     for (let i = 0; i < 10; i++) await tick();
 
-    const trashRow = root.querySelector('.trash-row')!;
+    const trashRow = root.querySelector('.cleanup-row')!;
     expect(trashRow.textContent).toContain('AI/Ollama.md');
     [...trashRow.querySelectorAll<HTMLButtonElement>('button')]
       .find((b) => b.textContent === '戻す')!.click();
     for (let i = 0; i < 20; i++) await tick();
 
     expect(await adapter.read('AI/Ollama.md')).toBe('# Ollama');
-    expect(root.querySelector('.trash-row')).toBeNull();
+    expect(root.querySelector('.cleanup-row')).toBeNull();
   });
 });

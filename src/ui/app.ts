@@ -1,7 +1,7 @@
 import type { VaultAdapter } from '../core/vault/VaultAdapter';
 import type { VPath } from '../core/vault/types';
 import type { KeyValueStore } from '../core/storage/KeyValueStore';
-import { VaultService, type VaultEvent } from '../core/vault/VaultService';
+import { VaultService, type NoteContent, type VaultEvent } from '../core/vault/VaultService';
 import { ConflictError, isVaultError } from '../core/vault/errors';
 import {
   basename, dirname, isAncestor, isBase, isCanvas, isHtml, isMarkdown, isOpenable,
@@ -23,7 +23,7 @@ import { Explorer } from './explorer';
 import { UnresolvedPane } from './unresolvedPane';
 import { SearchPane } from './searchPane';
 import { TagPane } from './tagPane';
-import { TrashPane } from './trashPane';
+import { CleanupPane } from './cleanupPane';
 import { QuickSwitcher } from './quickSwitcher';
 import { CommandPalette } from './commandPalette';
 import { SettingsModal } from './settingsModal';
@@ -41,6 +41,7 @@ import { trackKeyboardInset } from './viewport';
 import { button, el, noteLabel } from './dom';
 import { clearHtmlPreview, createHtmlPreviewFrame, renderHtmlPreview } from './htmlPreview';
 import { confirmDialog } from './dialog';
+import { resolveConflict } from './conflictDialog';
 import { askNewDocument } from './newDocumentDialog';
 import { BasesView } from './basesView';
 import { CanvasView } from './canvas/CanvasView';
@@ -79,7 +80,7 @@ export class App {
   private explorer: Explorer | null = null;
   private searchPane: SearchPane | null = null;
   private tagPane: TagPane | null = null;
-  private trashPane: TrashPane | null = null;
+  private cleanupPane: CleanupPane | null = null;
   private unresolvedPane: UnresolvedPane | null = null;
   private rightPane: RightPane | null = null;
   private graphModal: GraphModal | null = null;
@@ -420,7 +421,7 @@ export class App {
     this.explorer = null;
     this.searchPane = null;
     this.tagPane = null;
-    this.trashPane = null;
+    this.cleanupPane = null;
     this.unresolvedPane = null;
     this.mobileNav = null;
     this.mobileToolbar = null;
@@ -465,7 +466,7 @@ export class App {
     addTab('search', '検索', '全文検索');
     addTab('tags', 'タグ', 'タグ一覧');
     addTab('unresolved', '未解決', '未解決リンク（まだ書いていないノート）');
-    addTab('trash', 'ごみ箱', '削除したノート（ここから戻せます）');
+    addTab('trash', 'ごみ箱', '削除したノートと、競合で退避したファイル');
 
     const paneHost = el('div', 'pane-host');
 
@@ -484,10 +485,13 @@ export class App {
       onCreate: (name) => void this.createFromName(name),
       onOpen: (p, offset) => void this.openNote(p, offset),
     });
-    this.trashPane = new TrashPane({
+    this.cleanupPane = new CleanupPane({
       onRestore: (entry) => void this.restoreFromTrash(entry),
       onPurge: (entry) => void this.purgeTrash(entry),
       onPurgeAll: () => void this.purgeTrash(),
+      onOpenConflict: (path) => void this.openNote(path),
+      onDeleteConflict: (path) => void this.deleteConflicts([path]),
+      onDeleteAllConflicts: () => void this.deleteConflicts(),
     });
 
     sidebar.append(head, tabs, paneHost);
@@ -619,11 +623,11 @@ export class App {
       tab === 'files' ? this.explorer?.dom :
       tab === 'search' ? this.searchPane?.dom :
       tab === 'tags' ? this.tagPane?.dom :
-      tab === 'trash' ? this.trashPane?.dom :
+      tab === 'trash' ? this.cleanupPane?.dom :
       this.unresolvedPane?.dom;
     if (pane) els.paneHost.replaceChildren(pane);
     if (tab === 'search') this.searchPane?.focus();
-    if (tab === 'trash') void this.refreshTrash();
+    if (tab === 'trash') void this.refreshCleanup();
   }
 
   /**
@@ -703,11 +707,49 @@ export class App {
 
   // --------------------------------------------------------------- ごみ箱
 
-  private async refreshTrash(): Promise<void> {
+  private async refreshCleanup(): Promise<void> {
     const vault = this.vault;
-    if (!vault || !this.trashPane) return;
+    const pane = this.cleanupPane;
+    if (!vault || !pane) return;
     try {
-      this.trashPane.setEntries(await vault.listTrash());
+      const [entries, conflicts] = await Promise.all([vault.listTrash(), vault.listConflicts()]);
+      pane.setEntries(entries);
+      pane.setConflicts(conflicts);
+    } catch (e) {
+      this.toast(errorMessage(e), true);
+    }
+  }
+
+  /**
+   * 退避した競合ファイルを片付ける。
+   * ここも完全削除ではなくごみ箱へ移す（見比べ終える前に消してしまわないように）。
+   */
+  private async deleteConflicts(paths?: readonly VPath[]): Promise<void> {
+    const vault = this.vault;
+    if (!vault) return;
+    const targets = paths ?? await vault.listConflicts();
+    if (targets.length === 0) return;
+
+    const ok = await confirmDialog({
+      title: '競合ファイルの片付け',
+      message: targets.length === 1
+        ? `「${targets[0]}」をごみ箱へ移します。`
+        : `${targets.length} 件の競合ファイルをごみ箱へ移します。`,
+      confirmLabel: 'ごみ箱へ移す',
+      danger: true,
+    });
+    if (!ok) return;
+
+    try {
+      for (const path of targets) {
+        await vault.moveToTrash(path);
+        this.index?.removeNote(path);
+        this.viewStates.delete(path);
+        if (this.currentPath === path) this.closeNote();
+      }
+      await this.refreshTree();
+      await this.refreshCleanup();
+      this.toast(`${targets.length} 件をごみ箱へ移しました。`);
     } catch (e) {
       this.toast(errorMessage(e), true);
     }
@@ -720,7 +762,7 @@ export class App {
     for (const path of index.paths()) {
       if (path === root || isAncestor(root, path)) index.removeNote(path);
     }
-    await this.refreshTrash();
+    await this.refreshCleanup();
   }
 
   private async restoreFromTrash(entry: TrashEntry): Promise<void> {
@@ -730,7 +772,7 @@ export class App {
       const restored = await vault.restoreFromTrash(entry.path);
       await this.refreshTree();
       await this.reindexAll();
-      await this.refreshTrash();
+      await this.refreshCleanup();
       this.toast(`${restored} を戻しました。`);
     } catch (e) {
       this.toast(errorMessage(e), true);
@@ -754,7 +796,7 @@ export class App {
 
     try {
       await vault.purgeTrash(entry?.path);
-      await this.refreshTrash();
+      await this.refreshCleanup();
       this.toast(entry ? `${entry.original} を完全に削除しました。` : 'ごみ箱を空にしました。');
     } catch (e) {
       this.toast(errorMessage(e), true);
@@ -1193,18 +1235,25 @@ export class App {
     const vault = this.vault;
     if (!vault || !this.editor) return;
 
-    const keepMine = await confirmDialog({
-      title: '変更が競合しています',
-      message:
-        `「${path}」は他の場所で変更されています。\n` +
-        'どちらを選んでも、もう一方は .conflict ファイルとして残ります。',
-      confirmLabel: '自分の変更を保存',
-      cancelLabel: '外部の内容を読み込む',
-    });
+    let external: NoteContent;
+    try {
+      external = await vault.readNote(path);
+    } catch (e) {
+      this.setSaveState('error');
+      this.toast(errorMessage(e), true);
+      return;
+    }
+
+    // 中身を見てから選べるように、差分を同じ画面に出す（設計書 §9 の3択）。
+    const choice = await resolveConflict({ path, mine, theirs: external.text });
+    if (choice === 'cancel') {
+      this.setSaveState('dirty');
+      this.toast('競合の解決を取り消しました。保存はしていません。', true);
+      return;
+    }
 
     try {
-      if (keepMine) {
-        const external = await vault.readNote(path);
+      if (choice === 'mine') {
         const backup = await vault.saveConflictCopy(path, external.text);
         this.baseMtime = await vault.overwriteNote(path, mine);
         this.dirty = false;

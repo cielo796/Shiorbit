@@ -530,18 +530,43 @@ mark { background: rgba(167, 139, 250, .3); color: inherit; border-radius: 2px; 
 
 /* ----------------------------------------------------------------- ごみ箱 */
 
-.trash-pane { display: flex; flex-direction: column; min-height: 0; height: 100%; }
-.trash-row {
+.cleanup-pane { display: flex; flex-direction: column; min-height: 0; height: 100%; overflow: auto; }
+.cleanup-row {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 12px; border-bottom: 1px solid var(--border);
 }
-.trash-label { flex: 1; min-width: 0; }
-.trash-name {
+.cleanup-label { flex: 1; min-width: 0; }
+.cleanup-name {
   font-size: calc(var(--ui-font-size) * 0.8929); color: var(--fg);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.trash-stamp { font-size: calc(var(--ui-font-size) * 0.7857); color: var(--fg-faint); margin-top: 2px; }
-.trash-row button { flex: none; font-size: calc(var(--ui-font-size) * 0.7857); padding: 2px 6px; }
+.cleanup-note { font-size: calc(var(--ui-font-size) * 0.7857); color: var(--fg-faint); margin-top: 2px; }
+.cleanup-row button { flex: none; font-size: calc(var(--ui-font-size) * 0.7857); padding: 2px 6px; }
+
+/* --------------------------------------------------------------------- 差分 */
+
+.conflict-dialog { max-width: 640px; }
+.diff-legend { display: flex; gap: 12px; font-size: calc(var(--ui-font-size) * 0.7857); }
+.diff-legend-added { color: var(--ok); }
+.diff-legend-removed { color: var(--danger); }
+.diff-view {
+  max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); font-family: var(--font-mono);
+  font-size: calc(var(--editor-font-size) * 0.82); line-height: 1.6;
+}
+.diff-line { display: flex; gap: 0; white-space: pre; }
+.diff-num {
+  flex: none; width: 34px; text-align: right; padding-right: 6px;
+  color: var(--fg-faint); user-select: none;
+}
+.diff-mark { flex: none; width: 14px; text-align: center; user-select: none; }
+.diff-text { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.diff-added { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--fg); }
+.diff-removed { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--fg); }
+.diff-gap {
+  padding: 2px 8px; color: var(--fg-faint); text-align: center;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
 
 /* ------------------------------------------------------------------ Canvas */
 
