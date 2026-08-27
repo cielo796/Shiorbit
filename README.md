@@ -13,7 +13,8 @@ Obsidian 互換のローカル Markdown ノートアプリ。ノートの実体�
 
 **Phase 5（拡張）まで完了しました。** Phase 0〜4（土台 / ナレッジベース化 / 実用化 / グラフ / アプリ化）に加えて、
 アウトライン・リンクのリネーム追従・埋め込み表示・Bases・Canvas、そして新規作成／表示倍率／設定画面／位置の復元まで利用できます。
-次は Phase 6（プラグイン API・Web クリッパ）で、セキュリティモデルの決定から始めます。
+**Phase 6（品質と安全）も完了しました。** ごみ箱・競合の差分表示・CSP を入れ、
+`app.ts` をドキュメント種別ごとの View へ分割しています。次は Phase 7（スケール）です。
 
 ---
 
@@ -184,10 +185,15 @@ HTMLは安全な「プレビュー」が既定表示です。「ソース」に�
   ホイールで拡大縮小、背景のドラッグで移動。変更は自動保存に載ります。
   Obsidian で作った `.canvas` はそのまま開け、こちらで開いても Obsidian が付けた色や
   スタイルは消えません。
+- **ごみ箱** — 削除は `.trash/` への移動です。「ごみ箱」タブから元の場所へ戻せます。
+  完全に消えるのは、そこで「消す」を押したときだけです。競合で退避した
+  `.conflict-*` ファイルも同じタブから片付けられます。
+- **競合の差分表示** — 保存時にぶつかったら、外部の内容と自分の変更の**違いだけ**を
+  前後2行つきで見せます。どちらを選んでも、もう一方は `.conflict-*` として残ります。
 - **設定画面** — 変更は保存前にその場で反映され、閉じれば元に戻ります。
   表示倍率・文字サイズ・HTML の既定表示・自動保存の待ち時間・外部変更を見に行く間隔を変えられます。
 
-まだ無いもの: プラグイン API・Webクリッパ（Phase 6）。
+まだ無いもの: タブと分割ペイン（Phase 8）、プラグイン API・Webクリッパ（Phase 10）。
 
 ### 境界の答え合わせ
 
@@ -354,6 +360,8 @@ src/
 ├─ core/                       ← プラットフォームを知らない。ブラウザなしでテストできる
 │  ├─ vault/
 │  │  ├─ VaultAdapter.ts       ★ 境界そのもの。interface だけで実装は1行も無い
+│  │  ├─ trash.ts              .trash/ の置き方と、元の場所の復元
+│  │  ├─ conflict.ts           .conflict-* の命名と判定
 │  │  ├─ VaultService.ts       アプリから見た Vault の窓口
 │  │  └─ types.ts  errors.ts  path.ts
 │  ├─ markdown/
@@ -375,6 +383,7 @@ src/
 │  │  └─ types.ts
 │  ├─ bases/                   types.ts / parse.ts（.base の読み書き）/ query.ts（純粋な問い合わせ）
 │  ├─ canvas/                  types.ts / parse.ts（.canvas の読み書きと防御）
+│  ├─ diff/lineDiff.ts         行単位の差分（競合の表示に使う純粋関数）
 │  ├─ settings/Settings.ts     .shiorbit/settings.json（範囲検証・プレビュー）
 │  ├─ commands/CommandRegistry.ts
 │  ├─ refactor/                planRename.ts（影響範囲）/ renameLink.ts（書き換え）
@@ -405,6 +414,19 @@ src/
    ├─ modalList.ts             検索欄つきモーダル（下の2つで共用）
    ├─ quickSwitcher.ts         Ctrl+O
    ├─ commandPalette.ts        Ctrl+Shift+P
+   ├─ documentArea.ts          文書を1つ表示する領域（開く・保存・位置の復元）
+   ├─ views/                   種別ごとの見せ方（markdown / html / base / canvas）
+   ├─ workspaceChrome.ts       画面の外枠（サイドバー・ヘッダ・ステータスバー）
+   ├─ sidebarPanes.ts          左ペイン一式
+   ├─ documentCreator.ts       ノートを作る手順
+   ├─ cleanupController.ts     ごみ箱と競合ファイルの片付け
+   ├─ cleanupPane.ts           ごみ箱・競合ファイルの一覧
+   ├─ conflictDialog.ts        競合の差分表示と3択
+   ├─ vaultSync.ts             外部変更をツリーと索引へ取り込む
+   ├─ shortcuts.ts             画面全体のキーと表示倍率
+   ├─ welcomeScreen.ts         起動直後の画面
+   ├─ appearance.ts            テーマと文字サイズを CSS 変数へ
+   ├─ toaster.ts               画面隅の通知
    ├─ dialog.ts                prompt / confirm の代わり（Electron 対策）
    ├─ embed/
    │  ├─ embedWidget.ts        ![[...]] を本文に描く
@@ -527,6 +549,7 @@ runAdapterContract('NodeAdapter (実ファイルシステム)', { create: ... })
 
 ## 次にやること（Phase 5以降）
 
-次は埋め込みと添付表示、その後に読み取り専用 Bases、Canvas の順で進めます。プラグイン API と Webクリッパは、セキュリティモデルを先に決める Phase 6 へ分離しました。詳細は [PHASE5.md](./PHASE5.md) を参照してください。
-プラグイン API を入れるならセキュリティモデル（iframe / Worker サンドボックス）を先に決める必要があります。
-詳細は設計書 §11 / §12 を参照。
+Phase 5（拡張）と Phase 6（品質と安全）は完了しました。次は **Phase 7（スケール）** で、
+1万ノートの合成 Vault を作って実測してから最適化します（推測で最適化しない）。
+その後は Phase 8（タブと分割ペイン）→ Phase 9（モバイル実機・配布）→ Phase 10（プラグイン API・Web クリッパ）。
+詳細は [ROADMAP.md](./ROADMAP.md) を参照してください。

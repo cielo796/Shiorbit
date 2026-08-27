@@ -12,7 +12,7 @@ import { el } from '../dom';
 
 export interface CanvasViewOptions {
   /** 中身が変わった。保存は呼び出し側の自動保存に任せる。 */
-  onChange: (data: CanvasData) => void;
+  onChange?: (data: CanvasData) => void;
   /** file ノードを開く。 */
   onOpenFile: (file: string, subpath?: string) => void;
   /** file ノードの中身。表示できなければ null。 */
@@ -48,6 +48,8 @@ export class CanvasView {
   private readonly hint: HTMLElement;
 
   private data: CanvasData = emptyCanvas();
+  /** 開いている .canvas ごとに差し替える受け取り先。 */
+  private listener: ((data: CanvasData) => void) | null = null;
   private scale = 1;
   private offset = { x: 0, y: 0 };
   private selected: string | null = null;
@@ -74,6 +76,11 @@ export class CanvasView {
     this.dom.addEventListener('wheel', (event) => this.onWheel(event), { passive: false });
     this.dom.addEventListener('dblclick', (event) => this.onDoubleClick(event));
     this.dom.addEventListener('keydown', (event) => this.onKeyDown(event));
+  }
+
+  /** 変更の受け取り先を差し替える。null で外す（別の文書へ移るとき）。 */
+  bind(listener: ((data: CanvasData) => void) | null): void {
+    this.listener = listener;
   }
 
   setData(data: CanvasData): void {
@@ -116,7 +123,11 @@ export class CanvasView {
 
   private commit(): void {
     this.render();
-    this.opts.onChange(this.data);
+    this.emit();
+  }
+
+  private emit(): void {
+    (this.listener ?? this.opts.onChange)?.(this.data);
   }
 
   private takenIds(): Set<string> {
@@ -404,7 +415,7 @@ export class CanvasView {
       });
       area.addEventListener('input', () => {
         this.updateNode(node.id, { text: area.value });
-        this.opts.onChange(this.data);
+        this.emit();
       });
       return area;
     }

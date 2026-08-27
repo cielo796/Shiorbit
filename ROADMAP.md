@@ -142,21 +142,52 @@ Phase 10 開放         ← プラグイン API・Web クリッパ（旧 Phase 6
 
 **目的** — P0 を潰し、設計書との小さなズレを返済する。全項目が独立しており、順不同で進められる。
 
-| # | 項目 | 対応する問題 | 内容 |
-|---|---|---|---|
-| 6.1 | **Vault フォルダ名の確定** | P0-1 | `'Obdisan'` が意図か誤記かを確定。誤記なら正しい名前に直し、`Obdisan` からの移行も `MIGRATION_SOURCES` に追加（既にユーザーがいる可能性に備える） |
-| 6.2 | **ごみ箱** | P0-2 | 削除を `.trash/` への移動に変更（Obsidian と同じ）。`VaultService.remove` はそのまま残し、`moveToTrash` を追加。ごみ箱内の一覧・復元・完全削除 UI。`.trash` は隠しフォルダなのでツリー・インデックスから自動で除外される（`isHidden` が既に効く） |
-| 6.3 | **競合の差分表示** | P1-3 | 競合ダイアログに3択目「差分を見る」を追加。行単位の diff（自前実装で十分。`core/diff/lineDiff.ts` の純粋関数 + テスト）。`.conflict-*.md` の一覧ペインと「解決済みを削除」 |
-| 6.4 | **CSP** | P1-4 | `index.html` に CSP meta（`default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'`）。dev サーバとの両立は Vite の transformIndexHtml で切替 |
-| 6.5 | **app.ts の再分割** | P1-1 | **Phase 8 の前提条件。** ドキュメント表示を `DocumentView` インターフェース（open / save / restoreState / destroy）に抽出し、Markdown / HTML / Base / Canvas の4実装に分ける。App は「どの View を出すか」だけを知る |
+| # | 状態 | 項目 | 対応する問題 | 内容 |
+|---|---|---|---|---|
+| 6.1 | **完了** | **Vault フォルダ名の確定** | P0-1 | `'Obdisan'` が意図か誤記かを確定。誤記なら正しい名前に直し、`Obdisan` からの移行も `MIGRATION_SOURCES` に追加（既にユーザーがいる可能性に備える） |
+| 6.2 | **完了** | **ごみ箱** | P0-2 | 削除を `.trash/` への移動に変更（Obsidian と同じ）。`VaultService.remove` はそのまま残し、`moveToTrash` を追加。ごみ箱内の一覧・復元・完全削除 UI。`.trash` は隠しフォルダなのでツリー・インデックスから自動で除外される（`isHidden` が既に効く） |
+| 6.3 | **完了** | **競合の差分表示** | P1-3 | 競合ダイアログに3択目「差分を見る」を追加。行単位の diff（自前実装で十分。`core/diff/lineDiff.ts` の純粋関数 + テスト）。`.conflict-*.md` の一覧ペインと「解決済みを削除」 |
+| 6.4 | **完了** | **CSP** | P1-4 | `index.html` に CSP meta（`default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'`）。dev サーバとの両立は Vite の transformIndexHtml で切替 |
+| 6.5 | **完了** | **app.ts の再分割** | P1-1 | **Phase 8 の前提条件。** ドキュメント表示を `DocumentView` インターフェース（open / save / restoreState / destroy）に抽出し、Markdown / HTML / Base / Canvas の4実装に分ける。App は「どの View を出すか」だけを知る |
 
-**完了条件**
-- 削除→復元が一往復できる。`.trash` がインデックスに載らない
-- 競合時に差分が見え、選択後も退避ファイルが残る（現行保証の維持）
-- `document.querySelector('meta[http-equiv="Content-Security-Policy"]')` がテストで確認できる
-- `app.ts` が 700 行以下、ドキュメント種別の分岐が View 実装側へ移る
+**完了条件 — すべて達成（2026-08-27）**
+- [x] 削除→復元が一往復できる。`.trash` がインデックスに載らない
+- [x] 競合時に差分が見え、選択後も退避ファイルが残る（現行保証の維持）
+- [x] CSP が `index.html` に入り、テストで内容を固定（本番ビルドを実ブラウザでも確認）
+- [x] `app.ts` が **696 行**（着手時 1,503 行）、ドキュメント種別の分岐が View 実装側へ移った
 
-**規模感** — 中。6.5 が最大（ただし新機能ゼロの純リファクタリング。既存 266 件のテストが安全網）。
+**実績** — テスト 266 → **300 件**。境界チェック・型チェックともに通過。
+
+### 6.1 で確定させたこと
+
+`'Obdisan'` は **誤記**と判断しました。アプリ名（Shiorbit）とも IndexedDB 名（`shiorbit`）とも
+Android パッケージ（`app.shiorbit`）とも一致せず、移行の向きも `Shiorbit → Obdisan` と
+誤記の側へ進んでいたためです。
+
+既定を `Shiorbit` に戻し、`Obdisan` と `Obidisan` の**両方**を移行元に入れました。
+どの状態から起動してもノートを見失いません。実機配布前なので、実際に `Obdisan` を
+持っている利用者はいないはずですが、移行は残してあります。
+
+### 6.5 で作った境界
+
+```
+DocumentArea            ドキュメントを1つ表示する領域。開く・保存する・位置を戻す
+ └ DocumentView         種類ごとの見せ方（interface）
+    ├ MarkdownDocumentView
+    ├ HtmlDocumentView   （プレビュー / ソースの切り替えを「モード」として申告する）
+    ├ BaseDocumentView
+    └ CanvasDocumentView
+```
+
+App から `isHtml` / `isBase` / `isCanvas` の分岐が消え、表示切り替えボタンも
+「View が申告したものを並べる」形になりました。**ペインを増やすときは
+DocumentArea をペインの数だけ作れば済みます**（Phase 8 の前提条件）。
+
+併せて、App から次を切り出しました:
+`workspaceChrome`（外枠の DOM）/ `sidebarPanes`（左ペイン一式）/
+`documentCreator`（作成手順）/ `cleanupController`（ごみ箱と競合の片付け）/
+`vaultSync`（外部変更の取り込み）/ `shortcuts`（キーとズーム）/
+`welcomeScreen` / `appearance` / `toaster`。
 
 ---
 
@@ -269,7 +300,7 @@ Phase 9.2〜9.4（iOS・配布）
 Phase 10（開放）
 ```
 
-- **Phase 6.1 だけはフェーズを待たず、次の作業日に確認してください。**
+- ~~**Phase 6.1 だけはフェーズを待たず、次の作業日に確認してください。**~~ → 確定済み（上記）。
 - Phase 7 と Phase 9.1 は並行できます（触る場所が重ならない）。
 - 各フェーズの完了時は、これまでどおり DESIGN.md §12 の表に実測値つきで記録すること。
 
@@ -279,8 +310,8 @@ Phase 10（開放）
 
 | Phase | 内容 | 完了条件 | 状態 |
 |---|---|---|---|
-| **6. 品質と安全** | Vault名確定、ごみ箱、競合diff、CSP、DocumentView抽出 | 削除が復元でき、`app.ts` が700行以下 | 未着手 |
-| **7. スケール** | 計測基盤、インデックスWorker化、ポーリング間引き、索引保存の軽量化 | 1万ノートで起動1秒・保存反映100ms・検索200ms（CIで毎回計測） | 未着手 |
+| **6. 品質と安全** | Vault名確定、ごみ箱、競合diff、CSP、DocumentView抽出 | 削除が復元でき、`app.ts` が700行以下 | **完了**（app.ts 1,503→696行 / テスト300件） |
+| **7. スケール** | 計測基盤、インデックスWorker化、ポーリング間引き、索引保存の軽量化 | 1万ノートで起動1秒・保存反映100ms・検索200ms（CIで毎回計測） | 次はここ |
 | **8. ワークスペース** | タブ、縦2分割、状態復元 | 2ノートを並べて編集・参照できる | 未着手（6.5が前提） |
 | **9. モバイル出荷** | Android実機検証、iOS追加、Electron署名判断 | 実機のiPhoneとAndroidで同一Vaultを編集できる | 未着手 |
 | **10. 開放** | プラグインAPI、Webクリッパ | セキュリティモデル文書化の後に定義 | 未着手 |

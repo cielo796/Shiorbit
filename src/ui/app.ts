@@ -1,52 +1,42 @@
 import type { VaultAdapter } from '../core/vault/VaultAdapter';
 import type { VPath } from '../core/vault/types';
 import type { KeyValueStore } from '../core/storage/KeyValueStore';
-import { VaultService, type NoteContent, type VaultEvent } from '../core/vault/VaultService';
-import { ConflictError, isVaultError } from '../core/vault/errors';
-import {
-  basename, dirname, isAncestor, isBase, isCanvas, isHtml, isMarkdown, isOpenable,
-  isSupportedDocument, normalize,
-} from '../core/vault/path';
+import { VaultService } from '../core/vault/VaultService';
+import { isMarkdown } from '../core/vault/path';
 import { Indexer } from '../core/index/Indexer';
-import { LIMITS, Settings, clamp } from '../core/settings/Settings';
+import { LIMITS, Settings } from '../core/settings/Settings';
 import { CommandRegistry } from '../core/commands/CommandRegistry';
-import type { Heading } from '../core/markdown/scan';
-import { dailyPath } from '../core/notes/date';
-import { applyTemplate } from '../core/notes/template';
-import { defaultBase, parseBase } from '../core/bases/parse';
-import type { BaseDefinition } from '../core/bases/types';
-import { isCanvasReadable, parseCanvas, stringifyCanvas } from '../core/canvas/parse';
-import type { CanvasData } from '../core/canvas/types';
-import { newDocumentBody } from '../core/notes/newDocument';
-import { MarkdownEditor, type EditorViewState } from './editor';
-import { Explorer } from './explorer';
-import { UnresolvedPane } from './unresolvedPane';
-import { SearchPane } from './searchPane';
-import { TagPane } from './tagPane';
-import { CleanupPane } from './cleanupPane';
+import { MarkdownEditor } from './editor';
 import { QuickSwitcher } from './quickSwitcher';
 import { CommandPalette } from './commandPalette';
 import { SettingsModal } from './settingsModal';
-import { ModalList } from './modalList';
 import { GraphModal } from './graph/graphModal';
 import { RightPane } from './rightPane';
 import { registerAppCommands } from './appCommands';
 import { RenameController } from './renameController';
+import { DocumentCreator } from './documentCreator';
+import { CleanupController } from './cleanupController';
+import { SidebarPanes } from './sidebarPanes';
+import { Shortcuts } from './shortcuts';
+import { VaultSync } from './vaultSync';
 import { livePreview } from './livePreview';
 import { refreshPreview } from './previewState';
 import { followLinkCommand, wikilinkExtension, type WikilinkProvider } from './wikilinkExtension';
 import { MobileToolbar } from './mobileToolbar';
-import { MobileNav, type NavTarget } from './mobileNav';
+import type { MobileNav, NavTarget } from './mobileNav';
+import { buildWorkspaceChrome, type WorkspaceChrome } from './workspaceChrome';
+import { renderWelcome } from './welcomeScreen';
 import { trackKeyboardInset } from './viewport';
-import { button, el, noteLabel } from './dom';
-import { clearHtmlPreview, createHtmlPreviewFrame, renderHtmlPreview } from './htmlPreview';
+import { button, el } from './dom';
+import { applyAppearance } from './appearance';
+import { Toaster } from './toaster';
+import { createHtmlPreviewFrame } from './htmlPreview';
 import { confirmDialog } from './dialog';
-import { resolveConflict } from './conflictDialog';
-import { askNewDocument } from './newDocumentDialog';
 import { BasesView } from './basesView';
+import { DocumentArea } from './documentArea';
+import type { DocumentMode, DocumentSurfaces } from './views/DocumentView';
 import { CanvasView } from './canvas/CanvasView';
 import { EmbedResolver } from './embed/embedResolver';
-import type { TrashEntry } from '../core/vault/trash';
 
 /** Vault の入手方法。実装は main.ts (合成ルート) から注入される。 */
 export interface VaultSource {
@@ -65,9 +55,7 @@ export interface AppDeps {
   cache?: KeyValueStore;
 }
 
-type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type Tab = 'files' | 'search' | 'tags' | 'unresolved' | 'trash';
-type HtmlViewMode = 'preview' | 'source';
 
 
 export class App {
@@ -76,57 +64,42 @@ export class App {
   private settings: Settings | null = null;
   private readonly commands = new CommandRegistry();
 
-  private editor: MarkdownEditor | null = null;
-  private explorer: Explorer | null = null;
-  private searchPane: SearchPane | null = null;
-  private tagPane: TagPane | null = null;
-  private cleanupPane: CleanupPane | null = null;
-  private unresolvedPane: UnresolvedPane | null = null;
+  private panes: SidebarPanes | null = null;
   private rightPane: RightPane | null = null;
   private graphModal: GraphModal | null = null;
   private readonly switcher: QuickSwitcher;
   private readonly palette: CommandPalette;
   private readonly renamer: RenameController;
+  private readonly creator: DocumentCreator;
+  private readonly cleanup: CleanupController;
+  private readonly shortcuts: Shortcuts;
+  private readonly sync: VaultSync;
   private settingsModal: SettingsModal | null = null;
   private mobileNav: MobileNav | null = null;
   private mobileToolbar: MobileToolbar | null = null;
 
-  private currentPath: VPath | null = null;
-  private baseMtime = 0;
-  private dirty = false;
-  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private area: DocumentArea | null = null;
+  /** 面（CodeMirror など）は Vault ごとに1組。DocumentArea が使い分ける。 */
+  private surfaces: DocumentSurfaces | null = null;
   private currentTab: Tab = 'files';
-  private htmlViewMode: HtmlViewMode = 'preview';
   /** startWatching をやり直すのは間隔が変わったときだけにする。 */
   private watchInterval = 0;
-  /** ノートごとに読んでいた場所。切り替えて戻っても先頭に飛ばされないようにする。 */
-  private readonly viewStates = new Map<VPath, EditorViewState>();
-  /** プレビューに送った見出し番号。ソースへ戻るときの手掛かりにする。 */
-  private previewHeadingIndex = 0;
   /** ![[...]] と Canvas の file ノードの中身。ObjectURL の解放もここが持つ。 */
   private embeds: EmbedResolver | null = null;
-  private basesView: BasesView | null = null;
-  /** いま表として開いている .base。エディタで開いているときは null。 */
-  private currentBase: BaseDefinition | null = null;
-  private canvasView: CanvasView | null = null;
-  /** いま開いている .canvas。編集すると自動保存に載る。 */
-  private currentCanvas: CanvasData | null = null;
 
-  private els: {
-    workspace: HTMLElement;
-    title: HTMLElement;
-    emptyNote: HTMLElement;
-    paneHost: HTMLElement;
-    tabs: Map<Tab, HTMLButtonElement>;
-    statusPath: HTMLElement;
-    statusSave: HTMLElement;
-    statusIndex: HTMLElement;
-    htmlPreview: HTMLIFrameElement;
-    htmlModes: HTMLElement;
-    htmlModeButtons: Map<HtmlViewMode, HTMLButtonElement>;
-  } | null = null;
+  private chrome: WorkspaceChrome | null = null;
 
-  private readonly toastHost: HTMLElement;
+  private readonly toaster = new Toaster();
+
+  /** いま開いている文書。開いていなければ null。 */
+  private get currentPath(): VPath | null {
+    return this.area?.path ?? null;
+  }
+
+  private get editor(): MarkdownEditor | null {
+    return this.surfaces?.editor ?? null;
+  }
+
 
   /** エディタから見た「いま何が解決できるか」。Indexer を UI の外へ露出させない。 */
   private readonly wikilinks: WikilinkProvider = {
@@ -156,13 +129,12 @@ export class App {
     private readonly source: VaultSource,
     private readonly deps: AppDeps = {},
   ) {
-    this.toastHost = el('div', 'toast-host');
-    document.body.append(this.toastHost);
+    document.body.append(this.toaster.dom);
 
     this.switcher = new QuickSwitcher({
       items: () => this.index?.suggestions() ?? [],
-      onOpen: (path) => void this.openNote(path),
-      onCreate: (name) => void this.createFromName(name),
+      onOpen: (path) => void this.openDocument(path),
+      onCreate: (name) => void this.creator.fromName(name),
     });
     this.palette = new CommandPalette(this.commands);
     this.renamer = new RenameController({
@@ -170,51 +142,89 @@ export class App {
       index: () => this.index,
       currentPath: () => this.currentPath,
       ensureSaved: async () => {
-        if (this.dirty) await this.saveNow();
-        return !this.dirty;
+        if ((this.area?.isDirty ?? false)) await this.area?.saveNow();
+        return !(this.area?.isDirty ?? false);
       },
       refreshTree: () => this.refreshTree(),
-      openNote: (path) => this.openNote(path),
+      openNote: (path) => this.openDocument(path),
       notify: (message, isError) => this.toast(message, isError),
+    });
+
+    this.shortcuts = new Shortcuts({
+      active: () => this.vault !== null,
+      settings: () => this.settings,
+      commands: this.commands,
+      openPalette: () => this.palette.open(),
+      openQuickSwitcher: () => this.switcher.open(),
+      openGraph: () => this.openGraph(),
+      toast: (message) => this.toast(message),
+    });
+
+    this.sync = new VaultSync({
+      index: () => this.index,
+      refreshTree: () => this.refreshTree(),
+      applyExternal: (path) => this.area?.applyExternalChange(path) ?? Promise.resolve(),
+      toast: (message, isError) => this.toast(message, isError),
+    });
+
+    this.cleanup = new CleanupController({
+      vault: () => this.vault,
+      index: () => this.index,
+      pane: () => this.panes?.cleanup ?? null,
+      refreshTree: () => this.refreshTree(),
+      reindexAll: () => this.reindexAll(),
+      forget: (path) => this.area?.forget(path),
+      toast: (message, isError) => this.toast(message, isError),
+    });
+
+    this.creator = new DocumentCreator({
+      vault: () => this.vault,
+      index: () => this.index,
+      settings: () => this.settings?.data ?? null,
+      editor: () => this.editor,
+      currentPath: () => this.currentPath,
+      refreshTree: () => this.refreshTree(),
+      open: (path) => this.openDocument(path),
+      toast: (message, isError) => this.toast(message, isError),
     });
 
     registerAppCommands(this.commands, {
       openQuickSwitcher: () => this.switcher.open(),
       openSearch: () => { this.openSidebar(); this.setTab('search'); },
       openTrash: () => { this.openSidebar(); this.setTab('trash'); },
-      createNote: () => this.newDocument(),
-      openDaily: () => this.openDaily(),
-      insertTemplate: () => this.insertTemplate(),
-      save: () => this.saveNow(),
+      createNote: () => this.creator.fromDialog(),
+      openDaily: () => this.creator.openDaily(),
+      insertTemplate: () => this.creator.insertTemplate(),
+      save: () => this.area?.saveNow(),
       toggleLivePreview: () => this.settings?.update({ livePreview: !this.settings.data.livePreview }),
       toggleTheme: () => this.settings?.update({ theme: this.settings.data.theme === 'dark' ? 'light' : 'dark' }),
       openGraph: () => this.openGraph(),
       openSettings: () => this.settingsModal?.open(),
-      zoomIn: () => this.changeZoom(LIMITS.zoom.step),
-      zoomOut: () => this.changeZoom(-LIMITS.zoom.step),
-      zoomReset: () => this.changeZoom(0),
+      zoomIn: () => this.shortcuts.zoomBy(LIMITS.zoom.step),
+      zoomOut: () => this.shortcuts.zoomBy(-LIMITS.zoom.step),
+      zoomReset: () => this.shortcuts.zoomBy(0),
       reindex: () => this.reindexAll(true),
       renameCurrentNote: () => this.currentPath ? this.renamer.rename(this.currentPath) : undefined,
-      deleteCurrentNote: () => this.currentPath ? this.deleteEntry(this.currentPath) : undefined,
+      deleteCurrentNote: () => this.currentPath ? this.cleanup.moveToTrash(this.currentPath) : undefined,
       hasCurrentNote: () => this.currentPath !== null,
     });
 
     window.addEventListener('focus', () => void this.vault?.poll());
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
-        void this.saveNow();
+        void this.area?.saveNow();
         void this.index?.flush();
       }
     });
     window.addEventListener('beforeunload', (e) => {
-      if (this.dirty) {
-        void this.saveNow();
+      if ((this.area?.isDirty ?? false)) {
+        void this.area?.saveNow();
         e.preventDefault();
       }
       void this.index?.flush();
     });
-    window.addEventListener('keydown', (e) => this.onGlobalKey(e));
-    window.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+    window.addEventListener('keydown', (e) => this.shortcuts.onKeyDown(e));
+    window.addEventListener('wheel', (e) => this.shortcuts.onWheel(e), { passive: false });
     trackKeyboardInset();
   }
 
@@ -236,65 +246,16 @@ export class App {
 
   private renderWelcome(busy?: string): void {
     this.root.replaceChildren();
-    const wrap = el('div', 'welcome');
-
-    const h1 = el('h1');
-    h1.append('Shior', Object.assign(document.createElement('span'), { textContent: 'bit' }));
-    wrap.append(h1);
-
-    if (busy) {
-      wrap.append(el('p', undefined, busy));
-      this.root.append(wrap);
-      return;
-    }
-
-    if (this.source.supported) {
-      wrap.append(
-        el('p', undefined,
-          'フォルダを選ぶと、その中の .md / .html / .htm ファイルをそのまま編集できます。' +
-          'ファイルは通常形式のままなので、いつでも他のアプリで開けます。'),
-      );
-      const row = el('div', 'row');
-      row.append(
-        button('フォルダを開く', 'primary', async () => {
-          try {
-            await this.openVault(await this.source.pick());
-          } catch (e) {
-            if ((e as { name?: string })?.name === 'AbortError') return;
-            this.toast(errorMessage(e), true);
-          }
-        }),
-      );
-      void this.source.hasSaved().then((has) => {
-        if (!has) return;
-        row.append(
-          button('前回のフォルダを開く', undefined, async () => {
-            try {
-              const v = await this.source.restore(true);
-              if (v) await this.openVault(v);
-              else this.toast('アクセスを許可できませんでした。', true);
-            } catch (e) {
-              this.toast(errorMessage(e), true);
-            }
-          }),
-        );
-      });
-      wrap.append(row);
-    } else {
-      wrap.append(el('p', undefined, this.source.unsupportedReason));
-      const row = el('div', 'row');
-      row.append(button('デモモードで見る', 'primary', async () => {
-        await this.openVault(await this.source.demo());
-      }));
-      wrap.append(row);
-    }
-
-    wrap.append(
-      el('div', 'note',
-        'Phase 2: Live Preview / タグ / Daily Notes / テンプレート / テーマ / ' +
-        'コマンドパレット（Ctrl+Shift+P）/ インデックスの差分更新。'),
-    );
-    this.root.append(wrap);
+    this.root.append(renderWelcome({
+      supported: this.source.supported,
+      unsupportedReason: this.source.unsupportedReason,
+      pick: () => this.source.pick(),
+      restore: (prompt) => this.source.restore(prompt),
+      hasSaved: () => this.source.hasSaved(),
+      demo: () => this.source.demo(),
+      onOpen: (adapter) => this.openVault(adapter),
+      toast: (message, isError) => this.toast(message, isError),
+    }, busy));
   }
 
   // ------------------------------------------------------------- workspace
@@ -315,12 +276,8 @@ export class App {
     );
     this.settings = new Settings(vault);
     this.index = new Indexer(vault, this.deps.cache ? { cache: this.deps.cache } : {});
-    this.currentPath = null;
-    this.dirty = false;
-
     await this.settings.load();
-    this.applyTheme();
-    this.applyZoom();
+    applyAppearance(this.settings.data);
     this.settings.onChange(() => this.applySettings());
 
     this.settingsModal = new SettingsModal({
@@ -335,9 +292,9 @@ export class App {
     this.renderWorkspace();
     await this.refreshTree();
 
-    this.setIndexStatus('インデックス作成中…');
+    this.chrome?.setIndexStatus('インデックス作成中…');
     await this.index.rebuild((done, total) => {
-      if (done % 50 === 0 || done === total) this.setIndexStatus(`インデックス作成中… ${done}/${total}`);
+      if (done % 50 === 0 || done === total) this.chrome?.setIndexStatus(`インデックス作成中… ${done}/${total}`);
     });
     this.index.onChange(() => this.onIndexChanged());
     this.onIndexChanged();
@@ -347,7 +304,7 @@ export class App {
       this.toast(`インデックスを ${report.ms}ms で復元しました（再利用 ${report.reused} / 再読込 ${report.scanned}）。`);
     }
 
-    vault.on((ev) => void this.onVaultEvent(ev));
+    vault.on((ev) => void this.sync.handle(ev));
     this.watchInterval = this.settings.data.pollInterval;
     vault.startWatching({ intervalMs: this.watchInterval });
 
@@ -362,8 +319,8 @@ export class App {
       // ブラウザではユーザー操作中に picker を呼ぶ必要があるため、先に Promise を作る。
       const picked = this.source.pick();
       const adapter = await picked;
-      if (this.dirty) await this.saveNow();
-      if (this.dirty) {
+      if ((this.area?.isDirty ?? false)) await this.area?.saveNow();
+      if ((this.area?.isDirty ?? false)) {
         this.toast('未保存の変更があるため、フォルダを切り替えませんでした。', true);
         return;
       }
@@ -385,8 +342,8 @@ export class App {
     });
     if (!confirmed) return;
 
-    if (this.dirty) await this.saveNow();
-    if (this.dirty) {
+    if ((this.area?.isDirty ?? false)) await this.area?.saveNow();
+    if ((this.area?.isDirty ?? false)) {
       this.toast('未保存の変更があるため、設定を解除しませんでした。', true);
       return;
     }
@@ -401,37 +358,26 @@ export class App {
   }
 
   private leaveVault(): void {
-    if (this.saveTimer !== null) clearTimeout(this.saveTimer);
-    this.saveTimer = null;
     this.settingsModal?.close();
     this.graphModal?.close();
     this.rightPane?.destroy();
-    this.editor?.destroy();
+    this.area?.destroy();
+    this.surfaces?.editor.destroy();
     this.index?.dispose();
     this.vault?.dispose();
 
     this.settingsModal = null;
-    this.basesView = null;
-    this.currentBase = null;
-    this.canvasView = null;
-    this.currentCanvas = null;
     this.graphModal = null;
     this.rightPane = null;
-    this.editor = null;
-    this.explorer = null;
-    this.searchPane = null;
-    this.tagPane = null;
-    this.cleanupPane = null;
-    this.unresolvedPane = null;
+    this.area = null;
+    this.surfaces = null;
+    this.panes = null;
     this.mobileNav = null;
     this.mobileToolbar = null;
-    this.els = null;
+    this.chrome = null;
     this.settings = null;
     this.index = null;
     this.vault = null;
-    this.currentPath = null;
-    this.dirty = false;
-    this.viewStates.clear();
     this.embeds?.dispose();
     this.embeds = null;
     this.renderWelcome();
@@ -441,127 +387,32 @@ export class App {
     const vault = this.vault!;
     const settings = this.settings!;
     this.root.replaceChildren();
-    const workspace = el('div', 'workspace');
 
-    // --- 左サイドバー
-    const sidebar = el('aside', 'sidebar');
-    const head = el('div', 'sidebar-head');
-    const vaultName = el('div', 'vault-name', vault.name);
-    vaultName.title = vault.name;
-    head.append(
-      vaultName,
-      button('+', 'ghost', () => void this.newDocument()),
-      button('⚙', 'ghost', () => this.settingsModal?.open()),
-    );
-
-    const tabs = el('div', 'sidebar-tabs');
-    const tabButtons = new Map<Tab, HTMLButtonElement>();
-    const addTab = (id: Tab, label: string, title: string): void => {
-      const b = button(label, 'tab', () => this.setTab(id));
-      b.title = title;
-      tabButtons.set(id, b);
-      tabs.append(b);
-    };
-    addTab('files', 'ファイル', 'ファイルツリー');
-    addTab('search', '検索', '全文検索');
-    addTab('tags', 'タグ', 'タグ一覧');
-    addTab('unresolved', '未解決', '未解決リンク（まだ書いていないノート）');
-    addTab('trash', 'ごみ箱', '削除したノートと、競合で退避したファイル');
-
-    const paneHost = el('div', 'pane-host');
-
-    this.explorer = new Explorer({
-      onOpen: (p) => void this.openNote(p),
-      onRename: (p) => void this.renamer.rename(p),
-      onDelete: (p) => void this.deleteEntry(p),
-      onCreateIn: (dir) => void this.newDocument(dir),
+    const chrome = buildWorkspaceChrome({
+      vaultName: vault.name,
+      vaultId: vault.id,
+      realFolder: vault.caps.realFolder,
+      onTab: (tab) => this.setTab(tab),
+      onNew: () => void this.creator.fromDialog(),
+      onSettings: () => this.settingsModal?.open(),
+      onQuickSwitcher: () => this.switcher.open(),
+      onPalette: () => this.palette.open(),
+      onGraph: () => this.openGraph(),
+      onMobileNav: (target) => this.onMobileNav(target),
     });
-    this.searchPane = new SearchPane({
-      search: (q) => this.index?.searchNotes(q) ?? Promise.resolve([]),
-      onOpen: (p) => void this.openNote(p),
-    });
-    this.tagPane = new TagPane({ onOpen: (p) => void this.openNote(p) });
-    this.unresolvedPane = new UnresolvedPane({
-      onCreate: (name) => void this.createFromName(name),
-      onOpen: (p, offset) => void this.openNote(p, offset),
-    });
-    this.cleanupPane = new CleanupPane({
-      onRestore: (entry) => void this.restoreFromTrash(entry),
-      onPurge: (entry) => void this.purgeTrash(entry),
-      onPurgeAll: () => void this.purgeTrash(),
-      onOpenConflict: (path) => void this.openNote(path),
-      onDeleteConflict: (path) => void this.deleteConflicts([path]),
-      onDeleteAllConflicts: () => void this.deleteConflicts(),
-    });
+    this.mobileNav = chrome.mobileNav;
 
-    sidebar.append(head, tabs, paneHost);
-
-    // --- 中央
-    const main = el('div', 'main');
-    const mainHead = el('div', 'main-head');
-    const title = el('div', 'main-title', 'ノートを選択してください');
-    const htmlModes = el('div', 'html-view-modes');
-    const htmlModeButtons = new Map<HtmlViewMode, HTMLButtonElement>();
-    const addHtmlMode = (mode: HtmlViewMode, label: string): void => {
-      const modeButton = button(label, 'html-view-mode', () => this.setHtmlViewMode(mode));
-      modeButton.setAttribute('aria-pressed', 'false');
-      htmlModeButtons.set(mode, modeButton);
-      htmlModes.append(modeButton);
-    };
-    addHtmlMode('preview', 'プレビュー');
-    addHtmlMode('source', 'ソース');
-    htmlModes.style.display = 'none';
-    mainHead.append(
-      button('☰', 'ghost menu-btn', () => workspace.classList.toggle('drawer-open')),
-      title,
-      htmlModes,
-      button('⌕', 'ghost', () => this.switcher.open()),
-      button('⋯', 'ghost', () => this.palette.open()),
-      button('◍', 'ghost', () => this.openGraph()),
-      button('⇄', 'ghost', () => workspace.classList.toggle('rightbar-open')),
-    );
-
-    const editorHost = el('div', 'editor-host');
-    const emptyNote = el('div', 'empty-note',
-      'ツリーからノートを開くか、「+」で作成します（Ctrl+O でも切り替えられます）');
-    const editor = new MarkdownEditor({
-      onChange: () => this.onEdit(),
-      onSave: () => void this.saveNow(),
-      onPositionChange: (offset) => this.rightPane?.setCurrentOffset(offset),
-      showLineNumbers: settings.data.showLineNumbers,
-      extensions: [
-        livePreview(() => isMarkdown(this.currentPath ?? '') && (this.settings?.data.livePreview ?? false)),
-        wikilinkExtension(this.wikilinks, {
-          conceal: () => isMarkdown(this.currentPath ?? '') && (this.settings?.data.livePreview ?? false),
-        }),
-      ],
-      extraKeymap: [
-        { key: 'Mod-Enter', preventDefault: true, run: followLinkCommand(this.wikilinks) },
-      ],
-    });
-    this.editor = editor;
-    editor.dom.style.display = 'none';
-    const htmlPreview = createHtmlPreviewFrame();
-    htmlPreview.style.display = 'none';
-    this.basesView = new BasesView({ onOpen: (path) => void this.openNote(path) });
-    this.basesView.dom.style.display = 'none';
-    this.canvasView = new CanvasView({
-      onChange: (data) => this.onCanvasChange(data),
-      onOpenFile: (file) => void this.followLink(file),
-      loadFile: (file, subpath) => this.embeds?.readSection(file, subpath, 600) ?? Promise.resolve(null),
-    });
-    this.canvasView.dom.style.display = 'none';
-    editorHost.append(emptyNote, editor.dom, htmlPreview, this.basesView.dom, this.canvasView.dom);
+    this.buildPanes();
+    this.buildDocumentArea(vault, settings.data.showLineNumbers, chrome.modes);
 
     const toolbar = new MobileToolbar({ editor: () => this.editor });
     this.mobileToolbar = toolbar;
-    main.append(mainHead, editorHost, toolbar.dom);
+    chrome.main.append(this.area!.dom, toolbar.dom);
 
-    // --- 右ペイン（アウトライン + ローカルグラフ + バックリンク）
     this.rightPane = new RightPane({
-      onOpen: (p, offset) => void this.openNote(p, offset),
-      onCreate: (name) => void this.createFromName(name),
-      onReveal: (offset) => this.revealDocumentOffset(offset),
+      onOpen: (path, offset) => void this.openDocument(path, offset),
+      onCreate: (name) => void this.creator.fromName(name),
+      onReveal: (offset) => this.area?.reveal(offset),
       onGraphSelect: (id, kind, label) => void this.onGraphSelect(id, kind, label),
       currentPath: () => this.currentPath,
       onExpandGraph: () => this.openGraph(),
@@ -572,62 +423,85 @@ export class App {
       onSelect: (id, kind, label) => void this.onGraphSelect(id, kind, label),
     });
 
-    // --- ステータスバー
-    const statusbar = el('div', 'statusbar');
-    const statusAdapter = el('span', vault.caps.realFolder ? 'badge' : 'badge demo', vault.id);
-    const statusPath = el('span', undefined, '');
-    const statusIndex = el('span', 'status-index', '');
-    const statusSave = el('span', 'save', '');
-    statusbar.append(statusAdapter, statusPath, el('span', 'spacer'), statusIndex, statusSave);
+    chrome.workspace.append(
+      chrome.sidebar,
+      chrome.main,
+      this.rightPane.dom,
+      chrome.statusbar,
+      chrome.mobileNav.dom,
+      chrome.scrim,
+    );
+    this.root.append(chrome.workspace);
 
-    const scrim = el('div', 'scrim');
-    scrim.addEventListener('click', () => {
-      workspace.classList.remove('drawer-open', 'rightbar-open');
-      scrim.style.display = 'none';
-    });
-    scrim.style.display = 'none';
-    workspace.addEventListener('click', () => {
-      const open = workspace.classList.contains('drawer-open') || workspace.classList.contains('rightbar-open');
-      scrim.style.display = open ? '' : 'none';
-    });
-
-    this.mobileNav = new MobileNav({ onSelect: (target) => this.onMobileNav(target) });
-
-    workspace.append(sidebar, main, this.rightPane.dom, statusbar, this.mobileNav.dom, scrim);
-    this.root.append(workspace);
-
-    this.els = {
-      workspace,
-      title,
-      emptyNote,
-      paneHost,
-      tabs: tabButtons,
-      statusPath,
-      statusSave,
-      statusIndex,
-      htmlPreview,
-      htmlModes,
-      htmlModeButtons,
-    };
+    this.chrome = chrome;
     this.setTab('files');
-    this.setSaveState('idle');
+    this.chrome?.setSaveState('idle');
+  }
+
+  /** 左サイドバーに差し込む各ペイン。 */
+  private buildPanes(): void {
+    this.panes = new SidebarPanes({
+      index: () => this.index,
+      open: (path, offset) => void this.openDocument(path, offset),
+      create: (name) => void this.creator.fromName(name),
+      createIn: (dir) => void this.creator.fromDialog(dir),
+      rename: (path) => void this.renamer.rename(path),
+      moveToTrash: (path) => void this.cleanup.moveToTrash(path),
+      restore: (entry) => void this.cleanup.restore(entry),
+      purge: (entry) => void this.cleanup.purge(entry),
+      removeConflicts: (paths) => void this.cleanup.removeConflicts(paths),
+    });
+  }
+
+  /** 面を1組作り、DocumentArea に預ける。 */
+  private buildDocumentArea(vault: VaultService, showLineNumbers: boolean, modes: HTMLElement): void {
+    const isLivePreview = (): boolean =>
+      isMarkdown(this.currentPath ?? '') && (this.settings?.data.livePreview ?? false);
+
+    this.surfaces = {
+      editor: new MarkdownEditor({
+        onChange: () => this.area?.markDirty(),
+        onSave: () => void this.area?.saveNow(),
+        onPositionChange: (offset) => this.rightPane?.setCurrentOffset(offset),
+        showLineNumbers,
+        extensions: [
+          livePreview(isLivePreview),
+          wikilinkExtension(this.wikilinks, { conceal: isLivePreview }),
+        ],
+        extraKeymap: [
+          { key: 'Mod-Enter', preventDefault: true, run: followLinkCommand(this.wikilinks) },
+        ],
+      }),
+      preview: createHtmlPreviewFrame(),
+      bases: new BasesView({ onOpen: (path) => void this.openDocument(path) }),
+      canvas: new CanvasView({
+        onOpenFile: (file) => void this.followLink(file),
+        loadFile: (file, subpath) => this.embeds?.readSection(file, subpath, 600) ?? Promise.resolve(null),
+      }),
+    };
+
+    this.area = new DocumentArea({
+      vault,
+      index: () => this.index,
+      settings: () => this.settings!.data,
+      surfaces: this.surfaces,
+      placeholder: el('div', 'empty-note',
+        'ツリーからノートを開くか、「+」で作成します（Ctrl+O でも切り替えられます）'),
+      onSaveState: (state) => this.chrome?.setSaveState(state),
+      onChanged: () => this.onDocumentChanged(),
+      onModesChanged: (list, active) => this.renderModes(modes, list, active),
+      toast: (message, isError) => this.toast(message, isError),
+    });
   }
 
   private setTab(tab: Tab): void {
-    const els = this.els;
-    if (!els) return;
+    const chrome = this.chrome;
+    if (!chrome) return;
     this.currentTab = tab;
-    for (const [id, b] of els.tabs) b.classList.toggle('active', id === tab);
-
-    const pane =
-      tab === 'files' ? this.explorer?.dom :
-      tab === 'search' ? this.searchPane?.dom :
-      tab === 'tags' ? this.tagPane?.dom :
-      tab === 'trash' ? this.cleanupPane?.dom :
-      this.unresolvedPane?.dom;
-    if (pane) els.paneHost.replaceChildren(pane);
-    if (tab === 'search') this.searchPane?.focus();
-    if (tab === 'trash') void this.refreshCleanup();
+    chrome.setActiveTab(tab);
+    chrome.showPane(this.panes?.domFor(tab));
+    this.panes?.focus(tab);
+    if (tab === 'trash') void this.cleanup.refresh();
   }
 
   /**
@@ -635,54 +509,29 @@ export class App {
    * 狭い画面では「開く」と同じくらい「閉じる」導線が要る。
    */
   private onMobileNav(target: NavTarget): void {
-    const workspace = this.els?.workspace;
-    if (!workspace) return;
+    const chrome = this.chrome;
+    if (!chrome) return;
 
-    if (target === 'graph') {
-      workspace.classList.remove('drawer-open');
-      this.mobileNav?.setActive(null);
-      this.openGraph();
-      return;
-    }
-
-    const alreadyOpen =
-      workspace.classList.contains('drawer-open') && this.currentTab === target;
-    if (alreadyOpen) {
-      workspace.classList.remove('drawer-open');
-      this.mobileNav?.setActive(null);
-      return;
-    }
-
-    workspace.classList.add('drawer-open');
-    this.setTab(target);
-    this.mobileNav?.setActive(target);
+    // 同じ項目をもう一度押したら閉じる。グラフは引き出しを使わない。
+    const close = target === 'graph' || (chrome.isDrawerOpen() && this.currentTab === target);
+    chrome.setDrawerOpen(!close);
+    this.mobileNav?.setActive(close ? null : target);
+    if (target === 'graph') this.openGraph();
+    else if (!close) this.setTab(target);
   }
 
   private openSidebar(): void {
-    this.els?.workspace.classList.add('drawer-open');
-  }
-
-  private applyTheme(): void {
-    document.documentElement.dataset['theme'] = this.settings?.data.theme ?? 'dark';
+    this.chrome?.setDrawerOpen(true);
   }
 
   private applySettings(): void {
-    this.applyTheme();
-    this.applyZoom();
-    this.editor?.setLineNumbers(this.settings?.data.showLineNumbers ?? true);
+    const data = this.settings?.data;
+    if (!data) return;
+    applyAppearance(data);
+    this.editor?.setLineNumbers(data.showLineNumbers);
     this.editor?.applyEffects([refreshPreview.of(null)]);
     this.rightPane?.refreshTheme();
     this.applyWatchInterval();
-    if (isHtml(this.currentPath ?? '') && this.editor) this.updateHtmlPreview(this.editor.getDoc());
-  }
-
-  /** 文字サイズは CSS 変数に流し込む。個別のセレクタを触らずに全体へ効く。 */
-  private applyZoom(): void {
-    const data = this.settings?.data;
-    if (!data) return;
-    const style = document.documentElement.style;
-    style.setProperty('--ui-font-size', `${round(data.uiFontSize * data.zoom)}px`);
-    style.setProperty('--editor-font-size', `${round(data.editorFontSize * data.zoom)}px`);
   }
 
   private applyWatchInterval(): void {
@@ -693,12 +542,11 @@ export class App {
   }
 
   private async refreshTree(): Promise<void> {
-    if (!this.vault || !this.explorer) return;
+    if (!this.vault || !this.panes) return;
     try {
       // 一覧は1回だけ取り、ツリー用と添付用に振り分ける。
       const entries = await this.vault.listAll();
-      this.explorer.setEntries(entries.filter((e) => e.kind === 'dir' || isOpenable(e.path)));
-      this.explorer.setActive(this.currentPath);
+      this.panes.setEntries(entries, this.currentPath);
       this.embeds?.setEntries(entries);
     } catch (e) {
       this.toast(errorMessage(e), true);
@@ -707,106 +555,15 @@ export class App {
 
   // --------------------------------------------------------------- ごみ箱
 
-  private async refreshCleanup(): Promise<void> {
-    const vault = this.vault;
-    const pane = this.cleanupPane;
-    if (!vault || !pane) return;
-    try {
-      const [entries, conflicts] = await Promise.all([vault.listTrash(), vault.listConflicts()]);
-      pane.setEntries(entries);
-      pane.setConflicts(conflicts);
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
-  }
 
-  /**
-   * 退避した競合ファイルを片付ける。
-   * ここも完全削除ではなくごみ箱へ移す（見比べ終える前に消してしまわないように）。
-   */
-  private async deleteConflicts(paths?: readonly VPath[]): Promise<void> {
-    const vault = this.vault;
-    if (!vault) return;
-    const targets = paths ?? await vault.listConflicts();
-    if (targets.length === 0) return;
 
-    const ok = await confirmDialog({
-      title: '競合ファイルの片付け',
-      message: targets.length === 1
-        ? `「${targets[0]}」をごみ箱へ移します。`
-        : `${targets.length} 件の競合ファイルをごみ箱へ移します。`,
-      confirmLabel: 'ごみ箱へ移す',
-      danger: true,
-    });
-    if (!ok) return;
 
-    try {
-      for (const path of targets) {
-        await vault.moveToTrash(path);
-        this.index?.removeNote(path);
-        this.viewStates.delete(path);
-        if (this.currentPath === path) this.closeNote();
-      }
-      await this.refreshTree();
-      await this.refreshCleanup();
-      this.toast(`${targets.length} 件をごみ箱へ移しました。`);
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
-  }
 
-  /** ごみ箱を出入りしたノートを索引へ反映する。フォルダなら中身ごと。 */
-  private async reindexAfterTrash(root: VPath): Promise<void> {
-    const index = this.index;
-    if (!index) return;
-    for (const path of index.paths()) {
-      if (path === root || isAncestor(root, path)) index.removeNote(path);
-    }
-    await this.refreshCleanup();
-  }
-
-  private async restoreFromTrash(entry: TrashEntry): Promise<void> {
-    const vault = this.vault;
-    if (!vault) return;
-    try {
-      const restored = await vault.restoreFromTrash(entry.path);
-      await this.refreshTree();
-      await this.reindexAll();
-      await this.refreshCleanup();
-      this.toast(`${restored} を戻しました。`);
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
-  }
-
-  /** entry を省略するとごみ箱ごと空にする。ここだけが本当の削除。 */
-  private async purgeTrash(entry?: TrashEntry): Promise<void> {
-    const vault = this.vault;
-    if (!vault) return;
-
-    const ok = await confirmDialog({
-      title: 'ごみ箱から完全に削除',
-      message: entry
-        ? `「${entry.original}」を完全に削除します。\n\nこの操作は取り消せません。`
-        : 'ごみ箱の中身をすべて完全に削除します。\n\nこの操作は取り消せません。',
-      confirmLabel: '完全に削除',
-      danger: true,
-    });
-    if (!ok) return;
-
-    try {
-      await vault.purgeTrash(entry?.path);
-      await this.refreshCleanup();
-      this.toast(entry ? `${entry.original} を完全に削除しました。` : 'ごみ箱を空にしました。');
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
-  }
 
   private async reindexAll(force = false): Promise<void> {
     await this.refreshTree();
     if (!this.index) return;
-    this.setIndexStatus('再インデックス中…');
+    this.chrome?.setIndexStatus('再インデックス中…');
     await this.index.rebuild(undefined, force);
     this.onIndexChanged();
     this.toast(`インデックスを作り直しました（${this.index.report.ms}ms）。`);
@@ -819,255 +576,77 @@ export class App {
     if (!index) return;
 
     const stats = index.stats();
-    this.setIndexStatus(
+    this.chrome?.setIndexStatus(
       `${stats.notes} ノート / ${stats.links} リンク` +
       (stats.unresolved > 0 ? ` / 未解決 ${stats.unresolved}` : ''),
     );
 
-    this.unresolvedPane?.setGroups(index.unresolved());
-    this.tagPane?.setTags(index.tags());
-    this.searchPane?.refresh();
+    this.panes?.onIndexChanged(index);
     this.rightPane?.update(index, this.currentPath);
     this.graphModal?.refresh();
-    if (this.currentBase) this.basesView?.setNotes(index.allMeta());
+    this.area?.refreshDerived();
 
     this.editor?.applyEffects([refreshPreview.of(null)]);
   }
 
   // ---------------------------------------------------------------- notes
 
-  private async openNote(path: VPath, offset?: number): Promise<void> {
-    if (!this.vault || !this.editor || !this.els) return;
-    if (isBase(path)) {
-      await this.openBase(path);
-      return;
-    }
-    if (isCanvas(path)) {
-      await this.openCanvas(path);
-      return;
-    }
-    if (!isSupportedDocument(path)) {
-      this.toast(`${path} は未対応のファイル形式です。`, true);
-      return;
-    }
-    if (this.dirty) await this.saveNow();
-    this.rememberViewState();
 
-    try {
-      const note = await this.vault.readNote(path);
-      const restored = offset === undefined ? this.viewStates.get(path) : undefined;
-      this.currentBase = null;
-      this.currentCanvas = null;
-      this.currentPath = path;
-      this.baseMtime = note.mtime;
-      this.dirty = false;
-      this.editor.setLanguage(isHtml(path) ? 'html' : 'markdown');
-      this.editor.setDoc(note.text, restored);
-      this.rightPane?.setCurrentOffset(offset ?? restored?.anchor ?? 0);
-      this.els.emptyNote.style.display = 'none';
-      this.els.title.textContent = path;
-      this.els.statusPath.textContent = path;
-      this.explorer?.setActive(path);
-      this.setSaveState('idle');
-      this.els.workspace.classList.remove('drawer-open');
-      this.mobileNav?.setActive(null);
-      this.onIndexChanged();
-      if (isHtml(path)) {
-        this.htmlViewMode = this.settings?.data.htmlDefaultView ?? 'preview';
-        this.previewHeadingIndex = this.headingIndexAt(restored?.anchor ?? 0);
-        this.updateHtmlPreview(note.text);
-      }
-      this.updateDocumentView();
-      if (offset !== undefined) this.revealDocumentOffset(offset);
-      else if (!isHtml(path)) this.editor.focus();
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
-  }
+
+
+
+  // ---------------------------------------------------------------- 文書
 
   /**
-   * `.base` はエディタではなく表として開く。
-   * 定義が壊れていても既定の列で開けるようにして、書き直せる余地を残す。
+   * 文書を開く。種類ごとの違いは DocumentArea の中の View が引き受ける。
+   * App は「どれを開くか」と「開いた結果を周りへ伝えること」だけを知る。
    */
-  private async openBase(path: VPath): Promise<void> {
-    const vault = this.vault;
-    const els = this.els;
-    if (!vault || !els || !this.basesView) return;
-    if (this.dirty) await this.saveNow();
-    this.rememberViewState();
-
-    try {
-      const file = await vault.readNote(path);
-      const parsed = parseBase(file.text);
-      const base = parsed.columns.length > 0 ? parsed : { ...defaultBase(basename(path, true)), ...parsed, columns: defaultBase(basename(path, true)).columns };
-
-      this.currentPath = path;
-      this.currentBase = base.name === '' ? { ...base, name: basename(path, true) } : base;
-      this.baseMtime = file.mtime;
-      this.dirty = false;
-      els.emptyNote.style.display = 'none';
-      els.title.textContent = path;
-      els.statusPath.textContent = path;
-      this.explorer?.setActive(path);
-      this.setSaveState('idle');
-      els.workspace.classList.remove('drawer-open');
-      this.mobileNav?.setActive(null);
-      this.basesView.setBase(this.currentBase, this.index?.allMeta() ?? []);
-      this.onIndexChanged();
-      this.updateDocumentView();
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
+  private async openDocument(path: VPath, offset?: number): Promise<void> {
+    if (!this.area || !this.chrome) return;
+    const opened = await this.area.open(path, offset);
+    if (!opened) return;
+    this.chrome.setDrawerOpen(false);
+    this.mobileNav?.setActive(null);
   }
 
-  /**
-   * `.canvas` はホワイトボードとして開く。
-   * JSON として読めないファイルは開かない — 空の内容で上書きしてしまうため。
-   */
-  private async openCanvas(path: VPath): Promise<void> {
-    const vault = this.vault;
-    const els = this.els;
-    const canvas = this.canvasView;
-    if (!vault || !els || !canvas) return;
-    if (this.dirty) await this.saveNow();
-    this.rememberViewState();
+  /** 開いている文書が変わった / 表示が切り替わった。 */
+  private onDocumentChanged(): void {
+    const chrome = this.chrome;
+    const area = this.area;
+    if (!chrome || !area) return;
 
-    try {
-      const file = await vault.readNote(path);
-      if (!isCanvasReadable(file.text)) {
-        this.toast(`${path} は JSON として読めません。開かずにおきます。`, true);
-        return;
-      }
-
-      this.currentPath = path;
-      this.currentBase = null;
-      this.currentCanvas = parseCanvas(file.text);
-      this.baseMtime = file.mtime;
-      this.dirty = false;
-      els.emptyNote.style.display = 'none';
-      els.title.textContent = path;
-      els.statusPath.textContent = path;
-      this.explorer?.setActive(path);
-      this.setSaveState('idle');
-      els.workspace.classList.remove('drawer-open');
-      this.mobileNav?.setActive(null);
-      canvas.setData(this.currentCanvas);
-      this.onIndexChanged();
-      this.updateDocumentView();
-      canvas.fit();
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
+    const path = area.path;
+    chrome.setPath(path);
+    this.panes?.setActive(path);
+    this.mobileToolbar?.setVisible(area.usesMarkdownToolbar);
+    if (this.index) this.rightPane?.update(this.index, path);
+    this.rightPane?.setCurrentOffset(area.offset());
   }
 
-  private onCanvasChange(data: CanvasData): void {
-    this.currentCanvas = data;
-    this.dirty = true;
-    this.setSaveState('dirty');
-    if (this.saveTimer !== null) clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => void this.saveNow(), this.settings?.data.autoSaveDelay ?? 500);
+  /** View が申告した表示切り替えを、そのままボタンにする。 */
+  private renderModes(host: HTMLElement, modes: readonly DocumentMode[], active: string | null): void {
+    host.replaceChildren();
+    host.style.display = modes.length === 0 ? 'none' : '';
+
+    for (const mode of modes) {
+      const modeButton = button(mode.label, 'html-view-mode', () => this.area?.setMode(mode.id));
+      const on = mode.id === active;
+      modeButton.classList.toggle('active', on);
+      modeButton.setAttribute('aria-pressed', String(on));
+      host.append(modeButton);
+    }
   }
 
   private openGraph(): void {
     this.graphModal?.open();
   }
 
-  /**
-   * アウトラインなどからの移動。
-   * HTML のプレビュー中はソースへ切り替えず、プレビューの見出しへ送る。
-   */
-  private revealDocumentOffset(offset: number): void {
-    this.rightPane?.setCurrentOffset(offset);
 
-    if (isHtml(this.currentPath ?? '') && this.htmlViewMode === 'preview') {
-      this.previewHeadingIndex = this.headingIndexAt(offset);
-      if (this.editor) this.updateHtmlPreview(this.editor.getDoc());
-      return;
-    }
-    this.editor?.revealOffset(offset);
-  }
 
-  /**
-   * プレビューとソースを切り替える。
-   *
-   * プレビューの中は opaque origin なのでスクロール位置を読めない。
-   * 位置合わせは見出し単位に留め、行き先だけを揃える。
-   */
-  private setHtmlViewMode(mode: HtmlViewMode): void {
-    if (!isHtml(this.currentPath ?? '') || !this.editor) return;
-    const editor = this.editor;
-    const previous = this.htmlViewMode;
-    this.htmlViewMode = mode;
 
-    if (mode === 'preview') {
-      this.rememberViewState();
-      this.previewHeadingIndex = this.headingIndexAt(editor.getViewState().anchor);
-      this.updateHtmlPreview(editor.getDoc());
-    } else if (previous === 'preview') {
-      // display:none の間にスクロール位置が失われるので、明示的に戻す。
-      const heading = this.currentHeadings()[this.previewHeadingIndex];
-      const saved = this.currentPath ? this.viewStates.get(this.currentPath) : undefined;
-      if (heading) editor.revealOffset(heading.offset);
-      else if (saved) editor.setViewState(saved);
-    }
 
-    this.updateDocumentView();
-    if (mode === 'source') editor.focus();
-  }
 
-  private currentHeadings(): Heading[] {
-    const path = this.currentPath;
-    if (!path || !this.index) return [];
-    return this.index.getMeta(path)?.headings ?? [];
-  }
 
-  /** offset の直前にある見出しの番号。見出しが無ければ 0。 */
-  private headingIndexAt(offset: number): number {
-    const headings = this.currentHeadings();
-    let index = 0;
-    for (let i = 0; i < headings.length; i++) {
-      if (headings[i]!.offset > offset) break;
-      index = i;
-    }
-    return index;
-  }
-
-  private rememberViewState(): void {
-    if (!this.currentPath || !this.editor) return;
-    this.viewStates.set(this.currentPath, this.editor.getViewState());
-  }
-
-  private updateDocumentView(): void {
-    const els = this.els;
-    const editor = this.editor;
-    if (!els || !editor) return;
-    const hasDocument = this.currentPath !== null;
-    const base = this.currentBase !== null;
-    const canvas = this.currentCanvas !== null;
-    const html = isHtml(this.currentPath ?? '');
-    const preview = html && this.htmlViewMode === 'preview';
-
-    els.htmlModes.style.display = html ? '' : 'none';
-    els.htmlPreview.style.display = preview ? '' : 'none';
-    if (this.basesView) this.basesView.dom.style.display = base ? '' : 'none';
-    if (this.canvasView) this.canvasView.dom.style.display = canvas ? '' : 'none';
-    editor.dom.style.display = hasDocument && !preview && !base && !canvas ? '' : 'none';
-    this.mobileToolbar?.setVisible(hasDocument && isMarkdown(this.currentPath ?? ''));
-
-    for (const [mode, modeButton] of els.htmlModeButtons) {
-      const active = mode === this.htmlViewMode;
-      modeButton.classList.toggle('active', active);
-      modeButton.setAttribute('aria-pressed', String(active));
-    }
-  }
-
-  private updateHtmlPreview(source: string): void {
-    if (!this.els) return;
-    renderHtmlPreview(this.els.htmlPreview, source, {
-      zoom: this.settings?.data.zoom ?? 1,
-      headingIndex: this.previewHeadingIndex,
-    });
-  }
 
   /** グラフのノードをクリックしたとき。未解決ノードはその場で作れる。 */
   private async onGraphSelect(
@@ -1075,14 +654,14 @@ export class App {
     kind: 'note' | 'unresolved',
     label: string,
   ): Promise<void> {
-    if (kind === 'unresolved') await this.createFromName(label);
-    else await this.openNote(id);
+    if (kind === 'unresolved') await this.creator.fromName(label);
+    else await this.openDocument(id);
   }
 
   private async followLink(target: string): Promise<void> {
     const resolved = this.index?.resolve(target, this.currentPath ?? '') ?? null;
-    if (resolved) await this.openNote(resolved);
-    else await this.createFromName(target);
+    if (resolved) await this.openDocument(resolved);
+    else await this.creator.fromName(target);
   }
 
   /**
@@ -1090,412 +669,26 @@ export class App {
    * フォルダ指定が無ければ、いま開いているノートと同じフォルダに置く
    * （リンク解決が「近いものを優先」なので、関連ノートが自然にまとまる）。
    */
-  private async createFromName(name: string, body?: string): Promise<void> {
-    const vault = this.vault;
-    if (!vault) return;
 
-    const trimmed = name.trim().replace(/\.md$/i, '');
-    if (trimmed === '') return;
 
-    const dir = this.currentPath ? dirname(this.currentPath) : '';
-    const base = trimmed.includes('/') || dir === '' ? trimmed : `${dir}/${trimmed}`;
-    const path = `${normalize(base)}.md`;
 
-    try {
-      if (await vault.exists(path)) {
-        await this.openNote(path);
-        return;
-      }
-      const heading = basename(path, true);
-      await vault.createNote(path, body ?? `# ${heading}\n\n`);
-      await this.refreshTree();
-      await this.index?.updateNote(path);
-      await this.openNote(path);
-      this.toast(`${path} を作成しました。`);
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
-  }
 
-  /** 今日の Daily Note。無ければテンプレートから作る。 */
-  private async openDaily(): Promise<void> {
-    const vault = this.vault;
-    const settings = this.settings;
-    if (!vault || !settings) return;
 
-    const { dailyFolder, dailyFormat, dailyTemplate } = settings.data;
-    const path = dailyPath(new Date(), dailyFolder, dailyFormat);
 
-    try {
-      if (await vault.exists(path)) {
-        await this.openNote(path);
-        return;
-      }
 
-      const title = basename(path, true);
-      let body = `# ${title}\n\n`;
-      if (dailyTemplate.trim() !== '') {
-        try {
-          body = applyTemplate((await vault.readNote(dailyTemplate)).text, { title });
-        } catch {
-          this.toast(`テンプレート ${dailyTemplate} が読めませんでした。既定の内容で作ります。`, true);
-        }
-      }
 
-      await vault.createNote(path, body);
-      await this.refreshTree();
-      await this.index?.updateNote(path);
-      await this.openNote(path);
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
-  }
-
-  /** テンプレートフォルダの中身を選んでカーソル位置に挿入する */
-  private insertTemplate(): void {
-    const vault = this.vault;
-    const settings = this.settings;
-    if (!vault || !settings || !this.editor || !this.currentPath) return;
-
-    const folder = settings.data.templateFolder.trim();
-    void (async () => {
-      let files: VPath[] = [];
-      try {
-        files = (await vault.listNotes())
-          .map((e) => e.path)
-          .filter((p) => folder === '' || p === folder || p.startsWith(`${folder}/`));
-      } catch {
-        files = [];
-      }
-
-      if (files.length === 0) {
-        this.toast(`テンプレートが見つかりません（${folder || 'ルート'} に .md を置いてください）。`, true);
-        return;
-      }
-
-      new ModalList({
-        placeholder: 'テンプレートを選ぶ',
-        items: (query) =>
-          files
-            .filter((p) => query === '' || p.toLowerCase().includes(query.toLowerCase()))
-            .map((p) => ({ id: p, title: noteLabel(p), subtitle: p })),
-        onSelect: (item) => {
-          void (async () => {
-            try {
-              const text = (await vault.readNote(item.id)).text;
-              this.editor?.insertAtCursor(applyTemplate(text, { title: basename(this.currentPath!, true) }));
-            } catch (e) {
-              this.toast(errorMessage(e), true);
-            }
-          })();
-        },
-      }).open();
-    })();
-  }
-
-  private onEdit(): void {
-    if (isHtml(this.currentPath ?? '') && this.editor) this.updateHtmlPreview(this.editor.getDoc());
-    this.dirty = true;
-    this.setSaveState('dirty');
-    if (this.saveTimer !== null) clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => void this.saveNow(), this.settings?.data.autoSaveDelay ?? 500);
-  }
-
-  private async saveNow(): Promise<void> {
-    if (this.saveTimer !== null) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
-    const vault = this.vault;
-    const path = this.currentPath;
-    // .base は読み取り専用の表なので、エディタの内容で上書きしない。
-    if (!vault || !path || !this.editor || !this.dirty || this.currentBase) return;
-
-    const text = this.currentCanvas ? stringifyCanvas(this.currentCanvas) : this.editor.getDoc();
-    this.setSaveState('saving');
-    try {
-      this.baseMtime = await vault.writeNote(path, text, this.baseMtime);
-      this.dirty = false;
-      this.setSaveState('saved');
-      await this.index?.updateNote(path);
-    } catch (e) {
-      if (e instanceof ConflictError) await this.resolveConflict(path, text);
-      else {
-        this.setSaveState('error');
-        this.toast(errorMessage(e), true);
-      }
-    }
-  }
-
-  /**
-   * 競合の解決 (設計書 §9)。
-   * どちらを選んでも、失われる側は必ず .conflict-*.md として残す。
-   */
-  private async resolveConflict(path: VPath, mine: string): Promise<void> {
-    const vault = this.vault;
-    if (!vault || !this.editor) return;
-
-    let external: NoteContent;
-    try {
-      external = await vault.readNote(path);
-    } catch (e) {
-      this.setSaveState('error');
-      this.toast(errorMessage(e), true);
-      return;
-    }
-
-    // 中身を見てから選べるように、差分を同じ画面に出す（設計書 §9 の3択）。
-    const choice = await resolveConflict({ path, mine, theirs: external.text });
-    if (choice === 'cancel') {
-      this.setSaveState('dirty');
-      this.toast('競合の解決を取り消しました。保存はしていません。', true);
-      return;
-    }
-
-    try {
-      if (choice === 'mine') {
-        const backup = await vault.saveConflictCopy(path, external.text);
-        this.baseMtime = await vault.overwriteNote(path, mine);
-        this.dirty = false;
-        this.setSaveState('saved');
-        this.toast(`保存しました。外部の内容は ${backup} に退避しています。`);
-      } else {
-        const backup = await vault.saveConflictCopy(path, mine);
-        const fresh = await vault.readNote(path);
-        this.editor.setDoc(fresh.text, this.editor.getViewState());
-        if (isHtml(path)) this.updateHtmlPreview(fresh.text);
-        this.baseMtime = fresh.mtime;
-        this.dirty = false;
-        this.setSaveState('saved');
-        this.toast(`外部の内容を読み込みました。自分の変更は ${backup} に退避しています。`);
-      }
-      await this.refreshTree();
-      await this.index?.updateNote(path);
-    } catch (e) {
-      this.setSaveState('error');
-      this.toast(errorMessage(e), true);
-    }
-  }
-
-  /**
-   * 種別（Markdown / HTML / フォルダ）を選んで新規作成する。
-   *
-   * baseDir を省略すると、開いているノートと同じフォルダに作る
-   * （リンク解決が「近いものを優先」なので、関連ノートが自然にまとまる）。
-   */
-  private async newDocument(baseDir?: VPath): Promise<void> {
-    const vault = this.vault;
-    if (!vault) return;
-
-    const dir = baseDir ?? (this.currentPath ? dirname(this.currentPath) : '');
-    const plan = await askNewDocument({ baseDir: dir });
-    if (plan === null) return;
-
-    try {
-      if (plan.kind === 'folder') {
-        await vault.mkdir(plan.path);
-        await this.refreshTree();
-        this.toast(`${plan.path} を作成しました。`);
-        return;
-      }
-
-      if (await vault.exists(plan.path)) {
-        this.toast(`${plan.path} は既にあります。`, true);
-        await this.openNote(plan.path);
-        return;
-      }
-
-      await vault.createNote(plan.path, newDocumentBody(plan.kind, basename(plan.path, true)));
-      await this.refreshTree();
-      await this.index?.updateNote(plan.path);
-      await this.openNote(plan.path);
-      this.toast(`${plan.path} を作成しました。`);
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
-  }
-
-  private async deleteEntry(path: VPath): Promise<void> {
-    const vault = this.vault;
-    if (!vault) return;
-    const ok = await confirmDialog({
-      title: '削除',
-      message: `「${path}」をごみ箱へ移します。
-
-「ごみ箱」タブから元に戻せます。`,
-      confirmLabel: 'ごみ箱へ移す',
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await vault.moveToTrash(path);
-      this.index?.removeNote(path);
-      this.viewStates.delete(path);
-      if (this.currentPath === path) this.closeNote();
-      await this.refreshTree();
-      await this.reindexAfterTrash(path);
-      this.toast(`${path} をごみ箱へ移しました。「ごみ箱」タブから戻せます。`);
-    } catch (e) {
-      this.toast(errorMessage(e), true);
-    }
-  }
-
-  private closeNote(): void {
-    if (!this.els || !this.editor) return;
-    this.currentPath = null;
-    this.currentBase = null;
-    this.currentCanvas = null;
-    this.basesView?.setBase(null, []);
-    if (this.basesView) this.basesView.dom.style.display = 'none';
-    if (this.canvasView) this.canvasView.dom.style.display = 'none';
-    this.dirty = false;
-    this.editor.setDoc('');
-    this.editor.dom.style.display = 'none';
-    this.els.htmlPreview.style.display = 'none';
-    clearHtmlPreview(this.els.htmlPreview);
-    this.els.htmlModes.style.display = 'none';
-    this.mobileToolbar?.setVisible(false);
-    this.els.emptyNote.style.display = '';
-    this.els.title.textContent = 'ノートを選択してください';
-    this.els.statusPath.textContent = '';
-    if (this.index) this.rightPane?.update(this.index, null);
-    this.setSaveState('idle');
-  }
 
   // --------------------------------------------------------------- events
 
-  private onGlobalKey(e: KeyboardEvent): void {
-    const mod = e.ctrlKey || e.metaKey;
-    if (!mod || !this.vault) return;
-    const key = e.key.toLowerCase();
 
-    if (e.shiftKey && key === 'p') {
-      e.preventDefault();
-      this.palette.open();
-      return;
-    }
-    if (e.shiftKey && key === 'f') {
-      e.preventDefault();
-      void this.commands.run('search');
-      return;
-    }
-    if (e.shiftKey && key === 'd') {
-      e.preventDefault();
-      void this.commands.run('daily-note');
-      return;
-    }
-    if (!e.shiftKey && key === 'g') {
-      e.preventDefault();
-      this.openGraph();
-      return;
-    }
-    if (!e.shiftKey && (key === 'o' || key === 'p')) {
-      e.preventDefault();
-      this.switcher.open();
-      return;
-    }
 
-    // 拡大・縮小。ブラウザ自身のズームより先に受け取り、設定として保存する。
-    if (key === '=' || key === '+' || key === ';') {
-      e.preventDefault();
-      void this.changeZoom(LIMITS.zoom.step);
-    } else if (key === '-' || key === '_') {
-      e.preventDefault();
-      void this.changeZoom(-LIMITS.zoom.step);
-    } else if (key === '0') {
-      e.preventDefault();
-      void this.changeZoom(0);
-    }
-  }
 
-  private onWheel(e: WheelEvent): void {
-    if (!(e.ctrlKey || e.metaKey) || !this.settings) return;
-    e.preventDefault();
-    void this.changeZoom(e.deltaY < 0 ? LIMITS.zoom.step : -LIMITS.zoom.step);
-  }
-
-  /** delta が 0 なら等倍へ戻す。 */
-  private async changeZoom(delta: number): Promise<void> {
-    const settings = this.settings;
-    if (!settings) return;
-    const next = delta === 0
-      ? 1
-      : Math.round((settings.data.zoom + delta) * 100) / 100;
-    const zoom = clamp(next, LIMITS.zoom.min, LIMITS.zoom.max);
-    if (zoom === settings.data.zoom) return;
-    await settings.update({ zoom });
-    this.toast(`表示倍率 ${Math.round(zoom * 100)}%`);
-  }
-
-  private async onVaultEvent(ev: VaultEvent): Promise<void> {
-    if (ev.type === 'error') {
-      if (isVaultError(ev.error, 'EPERM')) {
-        this.toast('フォルダへのアクセス権が切れました。開き直してください。', true);
-      }
-      return;
-    }
-    if (ev.type === 'refresh') return;
-
-    if (ev.type === 'modify') {
-      if (ev.path === this.currentPath) {
-        if (!this.dirty) {
-          const fresh = await this.vault!.readNote(ev.path);
-          this.editor?.setDoc(fresh.text, this.editor.getViewState());
-          if (isHtml(ev.path)) this.updateHtmlPreview(fresh.text);
-          this.baseMtime = fresh.mtime;
-          this.toast('外部の変更を読み込みました。');
-        } else {
-          this.toast('このノートは外部でも変更されています。保存時に確認します。', true);
-        }
-      }
-      if (isSupportedDocument(ev.path)) await this.index?.updateNote(ev.path);
-      return;
-    }
-    if (ev.type === 'create') {
-      await this.refreshTree();
-      if (isSupportedDocument(ev.path)) await this.index?.updateNote(ev.path);
-      return;
-    }
-    if (ev.type === 'delete') {
-      if (isSupportedDocument(ev.path)) this.index?.removeNote(ev.path);
-      await this.refreshTree();
-      return;
-    }
-    if (ev.type === 'rename') {
-      this.index?.removeNote(ev.from);
-      await this.index?.updateNote(ev.to);
-      await this.refreshTree();
-    }
-  }
 
   // --------------------------------------------------------------- status
 
-  private setSaveState(state: SaveState): void {
-    if (!this.els) return;
-    const label: Record<SaveState, string> = {
-      idle: '', dirty: '未保存', saving: '保存中…', saved: '保存済み', error: '保存に失敗',
-    };
-    const cls: Record<SaveState, string> = {
-      idle: 'save', dirty: 'save', saving: 'save saving', saved: 'save saved', error: 'save error',
-    };
-    this.els.statusSave.textContent = label[state];
-    this.els.statusSave.className = cls[state];
-  }
-
-  private setIndexStatus(text: string): void {
-    if (this.els) this.els.statusIndex.textContent = text;
-  }
-
   private toast(message: string, isError = false): void {
-    const node = el('div', isError ? 'toast error' : 'toast', message);
-    this.toastHost.append(node);
-    setTimeout(() => node.remove(), 6000);
+    this.toaster.show(message, isError);
   }
-}
-
-/** CSS 変数へ書く値。端数が積み上がって滲まないよう 0.1px で丸める。 */
-function round(px: number): number {
-  return Math.round(px * 10) / 10;
 }
 
 function errorMessage(e: unknown): string {
