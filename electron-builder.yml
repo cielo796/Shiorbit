@@ -10,6 +10,9 @@ files:
   - dist/**/*
   - electron/**/*
   - package.json
+  # ウィンドウとタスクバーのアイコン。main.cjs が実行時に読むので同梱する
+  # （インストーラや exe のアイコンは electron-builder が別途 build/ から取る）
+  - build/icon.ico
 
 win:
   target:

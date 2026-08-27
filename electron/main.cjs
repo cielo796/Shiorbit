@@ -129,42 +129,49 @@ ipcMain.handle('vault:forget', async () => {
   await saveState({ vaultPath: null });
 });
 
-ipcMain.handle('fs:readText', async (_e, p) => fs.readFile(safePath(p), 'utf8'));
+/**
+ * fs のハンドラ。
+ *
+ * ipcMain.handle の失敗はメッセージだけがレンダラへ渡り、`error.code` は落ちる。
+ * それだと「ファイルが無い (ENOENT)」と「本当の入出力エラー」を区別できないので、
+ * コードをメッセージの先頭に載せて渡す (受け側は adapters/node.ts が読む)。
+ */
+function fsHandle(channel, run) {
+  ipcMain.handle(channel, async (_e, ...args) => {
+    try {
+      return await run(...args);
+    } catch (error) {
+      const code = error && error.code ? String(error.code) : 'EIO';
+      const message = error && error.message ? String(error.message) : String(error);
+      // node のメッセージは既に "ENOENT: ..." で始まることが多い。二重に付けない。
+      throw new Error(message.startsWith(`${code}:`) ? message : `${code}: ${message}`);
+    }
+  });
+}
 
-ipcMain.handle('fs:readBytes', async (_e, p) => {
-  const buf = await fs.readFile(safePath(p));
-  return new Uint8Array(buf);
-});
+fsHandle('fs:readText', (p) => fs.readFile(safePath(p), 'utf8'));
 
-ipcMain.handle('fs:writeText', async (_e, p, text) => {
-  await fs.writeFile(safePath(p), text, 'utf8');
-});
+fsHandle('fs:readBytes', async (p) => new Uint8Array(await fs.readFile(safePath(p))));
 
-ipcMain.handle('fs:writeBytes', async (_e, p, data) => {
-  await fs.writeFile(safePath(p), Buffer.from(data));
-});
+fsHandle('fs:writeText', (p, text) => fs.writeFile(safePath(p), text, 'utf8'));
 
-ipcMain.handle('fs:readDir', async (_e, p) => {
+fsHandle('fs:writeBytes', (p, data) => fs.writeFile(safePath(p), Buffer.from(data)));
+
+fsHandle('fs:readDir', async (p) => {
   const entries = await fs.readdir(safePath(p), { withFileTypes: true });
   return entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory() }));
 });
 
-ipcMain.handle('fs:stat', async (_e, p) => {
+fsHandle('fs:stat', async (p) => {
   const st = await fs.stat(safePath(p));
   return { mtimeMs: st.mtimeMs, size: st.size, isDirectory: st.isDirectory() };
 });
 
-ipcMain.handle('fs:mkdirp', async (_e, p) => {
-  await fs.mkdir(safePath(p), { recursive: true });
-});
+fsHandle('fs:mkdirp', (p) => fs.mkdir(safePath(p), { recursive: true }));
 
-ipcMain.handle('fs:remove', async (_e, p) => {
-  await fs.rm(safePath(p), { recursive: true, force: true });
-});
+fsHandle('fs:remove', (p) => fs.rm(safePath(p), { recursive: true, force: true }));
 
-ipcMain.handle('fs:rename', async (_e, from, to) => {
-  await fs.rename(safePath(from), safePath(to));
-});
+fsHandle('fs:rename', (from, to) => fs.rename(safePath(from), safePath(to)));
 
 // ------------------------------------------------------------------ 起動
 

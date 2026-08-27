@@ -48,9 +48,22 @@ const CODES: Record<string, 'ENOENT' | 'EEXIST' | 'EPERM' | 'EISDIR' | 'ENOTDIR'
   ENOTDIR: 'ENOTDIR',
 };
 
+/**
+ * IPC 越しに来たエラーからコードを拾う。
+ *
+ * Electron の ipcMain.handle はメッセージだけを渡し、`error.code` は落ちる。
+ * メインプロセス側がコードをメッセージの先頭に載せているので、そこから読む。
+ * 読めなければ従来どおり EIO 扱い。
+ */
+function codeFromMessage(e: unknown): string | undefined {
+  const message = (e as { message?: string } | null)?.message;
+  if (typeof message !== 'string') return undefined;
+  return /\b(ENOENT|EEXIST|EACCES|EPERM|EISDIR|ENOTDIR)\b/.exec(message)?.[1];
+}
+
 function mapError(e: unknown, path: VPath): never {
   if (e instanceof VaultError) throw e;
-  const code = (e as { code?: string } | null)?.code;
+  const code = (e as { code?: string } | null)?.code ?? codeFromMessage(e);
   const mapped = code ? CODES[code] : undefined;
   if (mapped === 'ENOENT') throw enoent(path);
   if (mapped === 'EPERM') throw eperm(`アクセスできません: ${path || '(ルート)'}`, e);
