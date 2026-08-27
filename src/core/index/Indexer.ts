@@ -367,21 +367,27 @@ export class Indexer {
   // ------------------------------------------------------------ 全文検索
 
   /** 上位ヒットについてだけ本文を読み直し、検索語の周辺を切り出す。 */
+  /**
+   * 全文検索。**抜粋（snippet）はここでは作らない。**
+   *
+   * 抜粋には本文が要るので、上位50件ぶんの読み込みが検索のたびに走っていた。
+   * File System Access API やモバイルではファイル1件ごとの往復が高いので、
+   * 実際に画面へ出た行だけ `snippetFor` で取りに行く形にした（ROADMAP 7.5）。
+   */
   async searchNotes(query: string, limit = 50): Promise<SearchResult[]> {
-    const hits = this.search.search(query, limit);
-    const results: SearchResult[] = [];
-    for (const hit of hits) {
+    return this.search.search(query, limit).flatMap((hit) => {
       const meta = this.entries.get(hit.path)?.meta;
-      if (!meta) continue;
-      let snippet = '';
-      try {
-        snippet = makeSnippet((await this.vault.readNote(hit.path)).text, query);
-      } catch {
-        snippet = '';
-      }
-      results.push({ path: hit.path, title: displayTitle(meta), score: hit.score, snippet });
+      return meta ? [{ path: hit.path, title: displayTitle(meta), score: hit.score, snippet: '' }] : [];
+    });
+  }
+
+  /** 検索結果の抜粋。読めなければ空文字（表示は落とさない）。 */
+  async snippetFor(path: VPath, query: string): Promise<string> {
+    try {
+      return makeSnippet((await this.vault.readNote(path)).text, query);
+    } catch {
+      return '';
     }
-    return results;
   }
 }
 

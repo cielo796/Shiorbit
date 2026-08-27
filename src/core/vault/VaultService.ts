@@ -324,49 +324,58 @@ export class VaultService {
 
   /** フォーカス復帰時などに明示的に1回だけ差分を取る */
   async poll(): Promise<FileEvent[]> {
-    let entries: Entry[];
+    let mtimes: Map<VPath, number>;
     try {
-      entries = await this.listAll();
+      mtimes = await this.readMtimes();
     } catch (error) {
       this.emit({ type: 'error', error });
       return [];
     }
 
-    const next = new Map<VPath, number>();
     const events: FileEvent[] = [];
-
-    for (const entry of entries) {
-      if (entry.kind !== 'file') continue;
-      const stat = await this.safeStat(entry.path);
-      if (!stat) continue;
-      next.set(entry.path, stat.mtime);
-
-      const prev = this.snapshot.get(entry.path);
-      if (prev === undefined) {
-        events.push({ type: 'create', path: entry.path });
-      } else if (prev !== stat.mtime) {
-        events.push({ type: 'modify', path: entry.path });
-      }
+    for (const [path, mtime] of mtimes) {
+      const previous = this.snapshot.get(path);
+      if (previous === undefined) events.push({ type: 'create', path });
+      else if (previous !== mtime) events.push({ type: 'modify', path });
     }
-
     for (const path of this.snapshot.keys()) {
-      if (!next.has(path)) events.push({ type: 'delete', path });
+      if (!mtimes.has(path)) events.push({ type: 'delete', path });
     }
 
-    this.snapshot = next;
+    this.snapshot = mtimes;
     for (const ev of events) this.emit(ev);
     return events;
   }
 
-  private async captureSnapshot(): Promise<void> {
-    this.snapshot.clear();
-    try {
-      for (const entry of await this.listAll()) {
-        if (entry.kind !== 'file') continue;
-        const stat = await this.safeStat(entry.path);
-        if (stat) this.snapshot.set(entry.path, stat.mtime);
+  /**
+   * 全ファイルの mtime を1周ぶん集める。
+   *
+   * **一覧で mtime まで返せるアダプタでは、ファイルごとの stat を呼ばない。**
+   * File System Access API や SAF ではファイル1件ごとの往復が高くつき、
+   * 1万ノートなら5秒ごとに1万回になってしまうため（ROADMAP 7.3）。
+   */
+  private async readMtimes(): Promise<Map<VPath, number>> {
+    const out = new Map<VPath, number>();
+
+    for (const entry of await this.listAll(true)) {
+      if (entry.kind !== 'file') continue;
+      if (entry.mtime !== undefined) {
+        out.set(entry.path, entry.mtime);
+        continue;
       }
+      // 一覧で mtime を返さないアダプタだけ、個別に聞きに行く。
+      const stat = await this.safeStat(entry.path);
+      if (stat) out.set(entry.path, stat.mtime);
+    }
+
+    return out;
+  }
+
+  private async captureSnapshot(): Promise<void> {
+    try {
+      this.snapshot = await this.readMtimes();
     } catch (error) {
+      this.snapshot.clear();
       this.emit({ type: 'error', error });
     }
   }

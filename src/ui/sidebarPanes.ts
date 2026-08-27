@@ -43,6 +43,7 @@ export class SidebarPanes {
     });
     this.search = new SearchPane({
       search: (query) => opts.index()?.searchNotes(query) ?? Promise.resolve([]),
+      snippet: (path, query) => opts.index()?.snippetFor(path, query) ?? Promise.resolve(''),
       onOpen: (path) => opts.open(path),
     });
     this.tags = new TagPane({ onOpen: (path) => opts.open(path) });
