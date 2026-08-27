@@ -258,6 +258,9 @@ export class DocumentArea {
     this.view?.destroy();
     this.view = null;
     this.states.clear();
+    // 面はこの領域のものなので、ここで畳む（CodeMirror を置き去りにしない）。
+    this.opts.surfaces.editor.destroy();
+    clearHtmlPreview(this.opts.surfaces.preview);
   }
 
   // ----------------------------------------------------------------- 内部
