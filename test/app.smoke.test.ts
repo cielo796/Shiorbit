@@ -922,4 +922,54 @@ describe('App の起動', () => {
     expect(await adapter.exists('a.md')).toBe(true);
     expect(await adapter.exists('d.md')).toBe(true);
   });
+  it('左右のサイドバーを隠せて、次に開いたときも同じ形に戻る', async () => {
+    const adapter = new MemoryAdapter('Panel UI');
+    await adapter.write('a.md', '# A');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    const workspace = root.querySelector('.workspace')!;
+    const press = async (key: string, shift = false): Promise<void> => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, shiftKey: shift }));
+      for (let i = 0; i < 6; i++) await tick();
+    };
+
+    // 最初はどちらも出ている。
+    expect(workspace.classList.contains('sidebar-hidden')).toBe(false);
+    expect(workspace.classList.contains('rightbar-hidden')).toBe(false);
+
+    await press('b');
+    expect(workspace.classList.contains('sidebar-hidden')).toBe(true);
+    await press('b', true);
+    expect(workspace.classList.contains('rightbar-hidden')).toBe(true);
+
+    // ヘッダのボタンでも戻せる。
+    [...root.querySelectorAll<HTMLButtonElement>('.main-head button')]
+      .find((b) => b.textContent === '☰')!.click();
+    for (let i = 0; i < 6; i++) await tick();
+    expect(workspace.classList.contains('sidebar-hidden')).toBe(false);
+
+    // 右は隠したまま保存される。
+    await new Promise((r) => setTimeout(r, 1000));
+    for (let i = 0; i < 10; i++) await tick();
+    const saved = JSON.parse(await adapter.read('.shiorbit/workspace.json')) as {
+      sidebarShown: boolean;
+      rightbarShown: boolean;
+    };
+    expect(saved).toMatchObject({ sidebarShown: true, rightbarShown: false });
+
+    // 開き直すと同じ形に戻る。
+    const root2 = document.createElement('div');
+    document.body.append(root2);
+    await new App(root2, sourceWithDemo(adapter)).start();
+    [...root2.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 16; i++) await tick();
+
+    const workspace2 = root2.querySelector('.workspace')!;
+    expect(workspace2.classList.contains('sidebar-hidden')).toBe(false);
+    expect(workspace2.classList.contains('rightbar-hidden')).toBe(true);
+  });
 });

@@ -24,6 +24,21 @@ export interface WorkspaceChromeOptions {
   onPalette: () => void;
   onGraph: () => void;
   onMobileNav: (target: NavTarget) => void;
+  onToggleSidebar: () => void;
+  onToggleRightbar: () => void;
+}
+
+/**
+ * 幅によって「畳む」と「かぶせて出す」が入れ替わる境目。
+ *
+ * **style.css のメディアクエリと同じ値**。片方だけ変えると、
+ * 押しても何も起きないボタンができる。
+ */
+const SIDEBAR_IS_DRAWER = '(max-width: 767px)';
+const RIGHTBAR_IS_OVERLAY = '(max-width: 1099px)';
+
+function matches(query: string): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia(query).matches;
 }
 
 /** App が状態を流し込む先。DOM の組み立てはこのファイルに閉じる。 */
@@ -50,6 +65,16 @@ export interface WorkspaceChrome {
   /** 狭い画面のサイドバー（引き出し）の開閉。 */
   setDrawerOpen: (open: boolean) => void;
   isDrawerOpen: () => boolean;
+
+  /**
+   * 左右のパネルの表示。
+   * 広い画面では桁ごと畳み、狭い画面ではかぶせて出す（見た目は違うが、
+   * 呼び出し側から見れば「出す / しまう」の1つの状態）。
+   */
+  setSidebarShown: (shown: boolean) => void;
+  isSidebarShown: () => boolean;
+  setRightbarShown: (shown: boolean) => void;
+  isRightbarShown: () => boolean;
 }
 
 const TABS: Array<{ id: WorkspaceTab; label: string; title: string }> = [
@@ -99,13 +124,13 @@ export function buildWorkspaceChrome(opts: WorkspaceChromeOptions): WorkspaceChr
   const modes = el('div', 'html-view-modes');
   modes.style.display = 'none';
   mainHead.append(
-    button('☰', 'ghost menu-btn', () => workspace.classList.toggle('drawer-open')),
+    button('☰', 'ghost menu-btn', opts.onToggleSidebar),
     title,
     modes,
     button('⌕', 'ghost', opts.onQuickSwitcher),
     button('⋯', 'ghost', opts.onPalette),
     button('◍', 'ghost', opts.onGraph),
-    button('⇄', 'ghost', () => workspace.classList.toggle('rightbar-open')),
+    button('⇄', 'ghost', opts.onToggleRightbar),
   );
   main.append(mainHead);
 
@@ -168,5 +193,23 @@ export function buildWorkspaceChrome(opts: WorkspaceChromeOptions): WorkspaceChr
     },
     setDrawerOpen: (open) => workspace.classList.toggle('drawer-open', open),
     isDrawerOpen: () => workspace.classList.contains('drawer-open'),
+
+    setSidebarShown: (shown) => {
+      if (matches(SIDEBAR_IS_DRAWER)) workspace.classList.toggle('drawer-open', shown);
+      else workspace.classList.toggle('sidebar-hidden', !shown);
+    },
+    isSidebarShown: () =>
+      matches(SIDEBAR_IS_DRAWER)
+        ? workspace.classList.contains('drawer-open')
+        : !workspace.classList.contains('sidebar-hidden'),
+
+    setRightbarShown: (shown) => {
+      if (matches(RIGHTBAR_IS_OVERLAY)) workspace.classList.toggle('rightbar-open', shown);
+      else workspace.classList.toggle('rightbar-hidden', !shown);
+    },
+    isRightbarShown: () =>
+      matches(RIGHTBAR_IS_OVERLAY)
+        ? workspace.classList.contains('rightbar-open')
+        : !workspace.classList.contains('rightbar-hidden'),
   };
 }

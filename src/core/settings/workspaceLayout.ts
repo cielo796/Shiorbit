@@ -12,6 +12,10 @@ export interface StoredPane {
 export interface StoredLayout {
   panes: StoredPane[];
   activePane: number;
+  /** 左サイドバー（ファイル・検索など）を出しているか */
+  sidebarShown: boolean;
+  /** 右サイドバー（アウトライン・グラフ・リンク）を出しているか */
+  rightbarShown: boolean;
 }
 
 export const LAYOUT_PATH = '.shiorbit/workspace.json';
@@ -20,7 +24,12 @@ export const LAYOUT_PATH = '.shiorbit/workspace.json';
 const MAX_PANES = 2;
 const MAX_TABS = 40;
 
-export const EMPTY_LAYOUT: StoredLayout = { panes: [{ tabs: [], active: null }], activePane: 0 };
+export const EMPTY_LAYOUT: StoredLayout = {
+  panes: [{ tabs: [], active: null }],
+  activePane: 0,
+  sidebarShown: true,
+  rightbarShown: true,
+};
 
 /** 何が入っていても、開ける形に整えて返す。読めなければ空の構成。 */
 export function normalizeLayout(input: unknown): StoredLayout {
@@ -36,6 +45,9 @@ export function normalizeLayout(input: unknown): StoredLayout {
   return {
     panes: panes as StoredPane[],
     activePane: Math.max(0, Math.min(panes.length - 1, Math.trunc(active))),
+    // 書かれていなければ「出す」。畳んだ覚えがないのに消えているほうが困る。
+    sidebarShown: source['sidebarShown'] !== false,
+    rightbarShown: source['rightbarShown'] !== false,
   };
 }
 
@@ -65,7 +77,12 @@ export function parseLayout(text: string): StoredLayout {
   }
 }
 
-/** 何も開いていない構成かどうか。保存する価値があるかの判断に使う。 */
+/**
+ * 何も覚えていない構成かどうか。
+ * タブが無くても、畳んだ状態は復元する値がある。
+ */
 export function isEmptyLayout(layout: StoredLayout): boolean {
-  return layout.panes.every((pane) => pane.tabs.length === 0);
+  return layout.panes.every((pane) => pane.tabs.length === 0)
+    && layout.sidebarShown
+    && layout.rightbarShown;
 }

@@ -43,6 +43,9 @@ export class Shortcuts {
       } else if (key === 'd') {
         event.preventDefault();
         void this.opts.commands.run('daily-note');
+      } else if (key === 'b') {
+        event.preventDefault();
+        void this.opts.commands.run('toggle-rightbar');
       }
       return;
     }
@@ -60,6 +63,11 @@ export class Shortcuts {
     if (key === 'w') {
       event.preventDefault();
       void this.opts.commands.run('close-tab');
+      return;
+    }
+    if (key === 'b') {
+      event.preventDefault();
+      void this.opts.commands.run('toggle-sidebar');
       return;
     }
     if (key === '\\') {

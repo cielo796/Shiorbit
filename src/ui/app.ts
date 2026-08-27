@@ -218,6 +218,8 @@ export class App {
       nextTab: () => this.workspacePanes?.active.cycle(1),
       previousTab: () => this.workspacePanes?.active.cycle(-1),
       toggleSplit: () => this.workspacePanes?.toggleSplit(),
+      toggleSidebar: () => this.togglePanel('sidebar'),
+      toggleRightbar: () => this.togglePanel('rightbar'),
       focusOtherPane: () => this.workspacePanes?.focusOther(),
       openInOtherPane: () => {
         const path = this.currentPath;
@@ -424,6 +426,8 @@ export class App {
       onPalette: () => this.palette.open(),
       onGraph: () => this.openGraph(),
       onMobileNav: (target) => this.onMobileNav(target),
+      onToggleSidebar: () => this.togglePanel('sidebar'),
+      onToggleRightbar: () => this.togglePanel('rightbar'),
     });
     this.mobileNav = chrome.mobileNav;
 
@@ -662,6 +666,22 @@ export class App {
     this.mobileNav?.setActive(null);
   }
 
+  /**
+   * 左右のパネルの表示を切り替える。
+   *
+   * 広い画面では桁ごと畳み、狭い画面ではかぶせて出す。
+   * どちらの見え方でも「出す / しまう」の1状態として扱い、
+   * 次に開いたときも同じ形になるよう覚えておく。
+   */
+  private togglePanel(side: 'sidebar' | 'rightbar'): void {
+    const chrome = this.chrome;
+    if (!chrome) return;
+
+    if (side === 'sidebar') chrome.setSidebarShown(!chrome.isSidebarShown());
+    else chrome.setRightbarShown(!chrome.isRightbarShown());
+    this.scheduleLayoutSave();
+  }
+
   /** いま開いているタブを基準に、その片側をまとめて閉じる。 */
   private async closeTabsBeside(side: 'left' | 'right' | 'both'): Promise<void> {
     const pane = this.workspacePanes?.active;
@@ -701,7 +721,12 @@ export class App {
     const panes = this.workspacePanes;
     if (!vault || !panes) return;
 
-    const layout = normalizeLayout(panes.serialize());
+    const chrome = this.chrome;
+    const layout = normalizeLayout({
+      ...panes.serialize(),
+      sidebarShown: chrome?.isSidebarShown() ?? true,
+      rightbarShown: chrome?.isRightbarShown() ?? true,
+    });
     try {
       await vault.writeNote(LAYOUT_PATH, serializeLayout(layout));
     } catch {
@@ -718,6 +743,8 @@ export class App {
     try {
       const stored = parseLayout((await vault.readNote(LAYOUT_PATH)).text);
       if (isEmptyLayout(stored)) return;
+      this.chrome?.setSidebarShown(stored.sidebarShown);
+      this.chrome?.setRightbarShown(stored.rightbarShown);
       await panes.restore(stored);
     } catch {
       /* 初回起動では存在しない */

@@ -18,6 +18,8 @@ export interface AppCommandActions {
   nextTab: () => void | Promise<void>;
   previousTab: () => void | Promise<void>;
   toggleSplit: () => void;
+  toggleSidebar: () => void;
+  toggleRightbar: () => void;
   focusOtherPane: () => void;
   openInOtherPane: () => void | Promise<void>;
   openSettings: () => void;
@@ -68,6 +70,18 @@ export function registerAppCommands(
     { id: 'next-tab', name: '次のタブ', hotkey: 'Ctrl+Tab', run: actions.nextTab },
     { id: 'previous-tab', name: '前のタブ', hotkey: 'Ctrl+Shift+Tab', run: actions.previousTab },
     { id: 'toggle-split', name: '画面を分割する / 戻す', hotkey: 'Ctrl+\\', run: actions.toggleSplit },
+    {
+      id: 'toggle-sidebar',
+      name: '左サイドバーを表示 / 隠す（ファイル・検索・タグ）',
+      hotkey: 'Ctrl+B',
+      run: actions.toggleSidebar,
+    },
+    {
+      id: 'toggle-rightbar',
+      name: '右サイドバーを表示 / 隠す（アウトライン・グラフ・リンク）',
+      hotkey: 'Ctrl+Shift+B',
+      run: actions.toggleRightbar,
+    },
     { id: 'focus-other-pane', name: 'もう片方のペインへ移る', run: actions.focusOtherPane },
     {
       id: 'open-in-other-pane',

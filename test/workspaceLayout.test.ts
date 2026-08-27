@@ -14,6 +14,8 @@ describe('ワークスペース構成の保存', () => {
       { tabs: ['c.md'], active: 'c.md' },
     ],
     activePane: 1,
+    sidebarShown: false,
+    rightbarShown: true,
   };
 
   it('書き戻して読み直しても同じ', () => {
@@ -27,12 +29,19 @@ describe('ワークスペース構成の保存', () => {
     expect(normalizeLayout({ panes: [{ tabs: 'not-an-array' }] })).toEqual({
       panes: [{ tabs: [], active: null }],
       activePane: 0,
+      sidebarShown: true,
+      rightbarShown: true,
     });
   });
 
   it('選択が一覧に無ければ先頭にする', () => {
     expect(normalizeLayout({ panes: [{ tabs: ['a.md'], active: 'いない.md' }], activePane: 0 }))
-      .toEqual({ panes: [{ tabs: ['a.md'], active: 'a.md' }], activePane: 0 });
+      .toEqual({
+        panes: [{ tabs: ['a.md'], active: 'a.md' }],
+        activePane: 0,
+        sidebarShown: true,
+        rightbarShown: true,
+      });
   });
 
   it('重複したタブは1つにまとめる', () => {
@@ -55,5 +64,17 @@ describe('ワークスペース構成の保存', () => {
   it('何も開いていない構成が分かる', () => {
     expect(isEmptyLayout(EMPTY_LAYOUT)).toBe(true);
     expect(isEmptyLayout(layout)).toBe(false);
+    // タブが無くても、畳んだ状態は覚える価値がある。
+    expect(isEmptyLayout({ ...EMPTY_LAYOUT, sidebarShown: false })).toBe(false);
+  });
+
+  it('左右パネルの表示を覚える（書かれていなければ出す）', () => {
+    expect(parseLayout(serializeLayout(layout)).sidebarShown).toBe(false);
+    expect(parseLayout(serializeLayout(layout)).rightbarShown).toBe(true);
+
+    // 古い workspace.json には無い項目。消えていたと勘違いさせないよう既定は表示。
+    const old = normalizeLayout({ panes: [{ tabs: ['a.md'], active: 'a.md' }], activePane: 0 });
+    expect(old.sidebarShown).toBe(true);
+    expect(old.rightbarShown).toBe(true);
   });
 });
