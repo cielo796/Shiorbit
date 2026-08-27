@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <!--
+      多層防御の最後の層（設計書 §11）。
+      HTML プレビューは data: URL の sandbox iframe なので frame-src に data: が要る。
+      埋め込み画像は ObjectURL なので img-src に blob: が要る。
+      開発サーバでは vite.config.ts が緩めた内容へ差し替える。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob: data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; frame-src data:; connect-src 'self' blob: data:; object-src 'none'; base-uri 'self'; form-action 'none'"
+    />
     <link rel="icon" type="image/png" href="/icon.png" />
     <title>Shiorbit</title>
   </head>
