@@ -574,6 +574,23 @@ mark { background: rgba(167, 139, 250, .3); color: inherit; border-radius: 2px; 
   .document-panes.split > .document-pane + .document-pane { display: none; }
 }
 
+/* ------------------------------------------------------- 右クリックメニュー */
+
+.context-menu {
+  position: fixed; z-index: 200;
+  min-width: 190px; padding: 4px;
+  display: flex; flex-direction: column;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 12px 30px rgba(0, 0, 0, .45);
+}
+.context-menu-item {
+  text-align: left; background: none; border: none; border-radius: 5px;
+  padding: 6px 10px; cursor: pointer; color: var(--fg);
+  font: inherit; font-size: calc(var(--ui-font-size) * 0.8571);
+}
+.context-menu-item:hover:not(:disabled) { background: var(--bg-hover); }
+.context-menu-item:disabled { color: var(--fg-faint); cursor: default; }
+
 /* ----------------------------------------------------------------- ごみ箱 */
 
 .cleanup-pane { display: flex; flex-direction: column; min-height: 0; height: 100%; overflow: auto; }

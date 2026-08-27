@@ -1,6 +1,7 @@
 import type { VPath } from '../core/vault/types';
 import { DocumentArea, type DocumentAreaOptions } from './documentArea';
 import { TabStrip } from './tabStrip';
+import { openContextMenu } from './contextMenu';
 import { el } from './dom';
 
 export interface DocumentPaneOptions extends DocumentAreaOptions {
@@ -27,6 +28,7 @@ export class DocumentPane {
     this.strip = new TabStrip({
       onSelect: (path) => void this.open(path),
       onClose: (path) => void this.close(path),
+      onMenu: (path, x, y) => this.openTabMenu(path, x, y),
     });
 
     this.dom = el('div', 'document-pane');
@@ -78,6 +80,43 @@ export class DocumentPane {
     this.opts.onTabsChanged();
   }
 
+  /**
+   * 基準のタブから見て、片側のタブをまとめて閉じる。
+   * `both` は「他のタブを閉じる」。基準そのものは残す。
+   */
+  async closeSide(base: VPath, side: 'left' | 'right' | 'both'): Promise<void> {
+    const at = this.tabs.indexOf(base);
+    if (at < 0) return;
+
+    const targets = this.tabs.filter((path, i) => {
+      if (path === base) return false;
+      if (side === 'left') return i < at;
+      if (side === 'right') return i > at;
+      return true;
+    });
+    if (targets.length === 0) return;
+
+    // 基準を先に出しておく。閉じる途中で別のタブへ移り、
+    // その保存や読み込みが挟まるのを避ける。
+    if (this.area.path !== base) await this.open(base);
+    for (const path of targets) {
+      this.tabs.splice(this.tabs.indexOf(path), 1);
+      this.area.forget(path);
+    }
+
+    this.refreshTabs();
+    this.opts.onTabsChanged();
+  }
+
+  /** 片側にタブがあるか。メニューの出し分けに使う。 */
+  countSide(base: VPath, side: 'left' | 'right' | 'both'): number {
+    const at = this.tabs.indexOf(base);
+    if (at < 0) return 0;
+    if (side === 'left') return at;
+    if (side === 'right') return this.tabs.length - at - 1;
+    return this.tabs.length - 1;
+  }
+
   /** 次 / 前のタブへ。Ctrl+Tab 用。 */
   async cycle(step: number): Promise<void> {
     if (this.tabs.length < 2) return;
@@ -101,6 +140,28 @@ export class DocumentPane {
       this.tabs.map((path) => ({ path, dirty: path === this.area.path && this.area.isDirty })),
       this.area.path,
     );
+  }
+
+  /** タブの右クリックメニュー。片側だけ閉じる導線をここに集める。 */
+  private openTabMenu(path: VPath, x: number, y: number): void {
+    openContextMenu(x, y, [
+      { label: 'このタブを閉じる', run: () => void this.close(path) },
+      {
+        label: `左側のタブを閉じる（${this.countSide(path, 'left')}）`,
+        enabled: this.countSide(path, 'left') > 0,
+        run: () => void this.closeSide(path, 'left'),
+      },
+      {
+        label: `右側のタブを閉じる（${this.countSide(path, 'right')}）`,
+        enabled: this.countSide(path, 'right') > 0,
+        run: () => void this.closeSide(path, 'right'),
+      },
+      {
+        label: `他のタブを閉じる（${this.countSide(path, 'both')}）`,
+        enabled: this.countSide(path, 'both') > 0,
+        run: () => void this.closeSide(path, 'both'),
+      },
+    ]);
   }
 
   setActive(active: boolean): void {

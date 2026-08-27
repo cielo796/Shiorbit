@@ -212,6 +212,9 @@ export class App {
       toggleTheme: () => this.settings?.update({ theme: this.settings.data.theme === 'dark' ? 'light' : 'dark' }),
       openGraph: () => this.openGraph(),
       closeTab: () => this.workspacePanes?.active.close(),
+      closeTabsLeft: () => this.closeTabsBeside('left'),
+      closeTabsRight: () => this.closeTabsBeside('right'),
+      closeOtherTabs: () => this.closeTabsBeside('both'),
       nextTab: () => this.workspacePanes?.active.cycle(1),
       previousTab: () => this.workspacePanes?.active.cycle(-1),
       toggleSplit: () => this.workspacePanes?.toggleSplit(),
@@ -657,6 +660,24 @@ export class App {
     await panes.open(path, offset, target);
     this.chrome.setDrawerOpen(false);
     this.mobileNav?.setActive(null);
+  }
+
+  /** いま開いているタブを基準に、その片側をまとめて閉じる。 */
+  private async closeTabsBeside(side: 'left' | 'right' | 'both'): Promise<void> {
+    const pane = this.workspacePanes?.active;
+    const path = pane?.path;
+    if (!pane || !path) return;
+
+    const count = pane.countSide(path, side);
+    if (count === 0) {
+      this.toast(side === 'left' ? '左側にタブはありません。'
+        : side === 'right' ? '右側にタブはありません。'
+        : '他に開いているタブはありません。', true);
+      return;
+    }
+
+    await pane.closeSide(path, side);
+    this.toast(`${count} 件のタブを閉じました。`);
   }
 
   /** タブ・分割・選択が変わった。開き直したときに同じ形へ戻せるよう覚えておく。 */

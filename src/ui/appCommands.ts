@@ -12,6 +12,9 @@ export interface AppCommandActions {
   toggleTheme: () => void | Promise<void>;
   openGraph: () => void;
   closeTab: () => void | Promise<void>;
+  closeTabsLeft: () => void | Promise<void>;
+  closeTabsRight: () => void | Promise<void>;
+  closeOtherTabs: () => void | Promise<void>;
   nextTab: () => void | Promise<void>;
   previousTab: () => void | Promise<void>;
   toggleSplit: () => void;
@@ -44,6 +47,24 @@ export function registerAppCommands(
     { id: 'toggle-theme', name: 'テーマを切り替える（ダーク / ライト）', run: actions.toggleTheme },
     { id: 'graph', name: 'グラフを開く', hotkey: 'Ctrl+G', run: actions.openGraph },
     { id: 'close-tab', name: 'タブを閉じる', hotkey: 'Ctrl+W', run: actions.closeTab, available: actions.hasCurrentNote },
+    {
+      id: 'close-tabs-left',
+      name: '左側のタブを閉じる',
+      available: actions.hasCurrentNote,
+      run: actions.closeTabsLeft,
+    },
+    {
+      id: 'close-tabs-right',
+      name: '右側のタブを閉じる',
+      available: actions.hasCurrentNote,
+      run: actions.closeTabsRight,
+    },
+    {
+      id: 'close-other-tabs',
+      name: '他のタブを閉じる',
+      available: actions.hasCurrentNote,
+      run: actions.closeOtherTabs,
+    },
     { id: 'next-tab', name: '次のタブ', hotkey: 'Ctrl+Tab', run: actions.nextTab },
     { id: 'previous-tab', name: '前のタブ', hotkey: 'Ctrl+Shift+Tab', run: actions.previousTab },
     { id: 'toggle-split', name: '画面を分割する / 戻す', hotkey: 'Ctrl+\\', run: actions.toggleSplit },

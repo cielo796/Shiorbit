@@ -865,4 +865,61 @@ describe('App の起動', () => {
     expect(saved.panes).toHaveLength(2);
     expect(saved.panes.flatMap((pane) => pane.tabs).sort()).toEqual(['a.md', 'b.md']);
   });
+  it('タブの右クリックから左右のタブをまとめて閉じる', async () => {
+    const adapter = new MemoryAdapter('Tab menu UI');
+    for (const name of ['a', 'b', 'c', 'd']) await adapter.write(`${name}.md`, `# ${name}`);
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    const open = async (label: string): Promise<void> => {
+      const row = [...root.querySelectorAll('.tree .row')]
+        .find((node) => node.querySelector('.label')?.textContent === label)!;
+      (row as HTMLElement).click();
+      for (let i = 0; i < 10; i++) await tick();
+    };
+    const tabs = (): string[] =>
+      [...root.querySelectorAll('.tab-item .tab-label')].map((node) => node.textContent!);
+    const menu = (): HTMLElement => document.querySelector('.context-menu')!;
+    const clickMenu = (starts: string): void => {
+      const item = [...menu().querySelectorAll<HTMLButtonElement>('.context-menu-item')]
+        .find((b) => b.textContent?.startsWith(starts))!;
+      expect(item, starts).toBeDefined();
+      item.click();
+    };
+
+    for (const name of ['a', 'b', 'c', 'd']) await open(name);
+    expect(tabs()).toEqual(['a', 'b', 'c', 'd']);
+
+    // c を右クリック → 件数つきで出る。
+    const tabC = [...root.querySelectorAll<HTMLElement>('.tab-item')]
+      .find((item) => item.textContent?.startsWith('c'))!;
+    tabC.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 10, clientY: 10 }));
+    for (let i = 0; i < 3; i++) await tick();
+    expect(menu().textContent).toContain('左側のタブを閉じる（2）');
+    expect(menu().textContent).toContain('右側のタブを閉じる（1）');
+
+    clickMenu('左側のタブを閉じる');
+    for (let i = 0; i < 14; i++) await tick();
+    expect(tabs()).toEqual(['c', 'd']);
+    // 基準にしたタブは残り、開いたままになる。
+    expect(root.querySelector('.main-title')?.textContent).toBe('c.md');
+    expect(document.querySelector('.context-menu')).toBeNull();
+
+    // 今度は右側。
+    [...root.querySelectorAll<HTMLElement>('.tab-item')]
+      .find((item) => item.textContent?.startsWith('c'))!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 10, clientY: 10 }));
+    for (let i = 0; i < 3; i++) await tick();
+    clickMenu('右側のタブを閉じる');
+    for (let i = 0; i < 14; i++) await tick();
+
+    // 1枚になったので帯は隠れるが、開いているのは c のまま。
+    expect(root.querySelector<HTMLElement>('.tab-strip')?.style.display).toBe('none');
+    expect(root.querySelector('.main-title')?.textContent).toBe('c.md');
+    expect(await adapter.exists('a.md')).toBe(true);
+    expect(await adapter.exists('d.md')).toBe(true);
+  });
 });

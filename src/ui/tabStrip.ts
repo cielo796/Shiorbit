@@ -5,6 +5,8 @@ import { el } from './dom';
 export interface TabStripOptions {
   onSelect: (path: VPath) => void;
   onClose: (path: VPath) => void;
+  /** 右クリック。画面座標をそのまま渡す。 */
+  onMenu: (path: VPath, x: number, y: number) => void;
 }
 
 export interface TabState {
@@ -49,6 +51,10 @@ export class TabStrip {
       });
 
       item.append(label, close);
+      item.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        this.opts.onMenu(tab.path, event.clientX, event.clientY);
+      });
       item.addEventListener('mousedown', (event) => {
         // 中クリックで閉じる（ブラウザのタブと同じ）。
         if (event.button === 1) {
