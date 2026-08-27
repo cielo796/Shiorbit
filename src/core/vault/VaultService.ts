@@ -1,7 +1,19 @@
 import type { VaultAdapter } from './VaultAdapter';
 import type { Entry, FileEvent, Unsubscribe, VPath } from './types';
 import { ConflictError, isVaultError } from './errors';
-import { isHidden, isMarkdown, isOpenable, isSupportedDocument } from './path';
+import {
+  basename, dirname, isAncestor, isHidden, isMarkdown, isOpenable, isSupportedDocument, join, segments,
+} from './path';
+import {
+  TRASH_DIR,
+  collectTrashEntries,
+  formatTrashStamp,
+  freeStamp,
+  isInTrash,
+  originalPathOf,
+  trashPathFor,
+  type TrashEntry,
+} from './trash';
 
 export interface NoteContent {
   path: VPath;
@@ -169,6 +181,95 @@ export class VaultService {
     await this.adapter.remove(path);
     this.snapshot.delete(path);
     this.emit({ type: 'delete', path });
+  }
+
+  // --------------------------------------------------------------- ごみ箱
+
+  /**
+   * 削除の代わりに `.trash/` へ移す（設計方針: データを黙って捨てない）。
+   *
+   * フォルダは中のファイルを1件ずつ移す。
+   * File System Access API の rename はファイルしか動かせないので、
+   * アダプタごとの差に頼らずに済ませるため。
+   */
+  async moveToTrash(path: VPath): Promise<VPath> {
+    const entries = await this.adapter.list('', true);
+    const taken = new Set(
+      entries
+        .filter((entry) => segments(entry.path).length === 2 && isInTrash(entry.path))
+        .map((entry) => basename(entry.path)),
+    );
+    const stamp = freeStamp(formatTrashStamp(new Date()), path, taken);
+    const target = trashPathFor(stamp, path);
+
+    await this.adapter.mkdir(TRASH_DIR).catch(() => undefined);
+    const self = entries.find((entry) => entry.path === path);
+
+    if (self?.kind === 'dir') {
+      const files = entries.filter((entry) => entry.kind === 'file' && isAncestor(path, entry.path));
+      await this.adapter.mkdir(target);
+      for (const file of files) {
+        const moved = join(target, file.path.slice(path.length + 1));
+        await this.adapter.mkdir(dirname(moved));
+        await this.adapter.rename(file.path, moved);
+      }
+      await this.adapter.remove(path);
+    } else {
+      await this.adapter.rename(path, target);
+    }
+
+    this.snapshot.delete(path);
+    this.emit({ type: 'delete', path });
+    return target;
+  }
+
+  /** ごみ箱の中身。戻す単位（消したときに選んだもの）だけを返す。 */
+  async listTrash(): Promise<TrashEntry[]> {
+    const entries = await this.adapter.list(TRASH_DIR, true).catch(() => []);
+    return collectTrashEntries(entries.filter((entry) => isInTrash(entry.path)));
+  }
+
+  /**
+   * ごみ箱から元の場所へ戻す。
+   * 同じ名前が既にあるときは上書きせず、呼び出し側にエラーを返す。
+   */
+  async restoreFromTrash(trashed: VPath): Promise<VPath> {
+    const original = originalPathOf(trashed);
+    if (original === null) throw new Error(`${trashed} はごみ箱の中ではありません。`);
+    if (await this.adapter.exists(original)) {
+      throw new Error(`${original} は既にあります。先に名前を変えてください。`);
+    }
+
+    const entries = await this.adapter.list(TRASH_DIR, true).catch(() => []);
+    const self = entries.find((entry) => entry.path === trashed);
+
+    if (self?.kind === 'dir') {
+      const files = entries.filter((entry) => entry.kind === 'file' && isAncestor(trashed, entry.path));
+      await this.adapter.mkdir(original);
+      for (const file of files) {
+        const back = originalPathOf(file.path);
+        if (back === null) continue;
+        await this.adapter.mkdir(dirname(back));
+        await this.adapter.rename(file.path, back);
+      }
+      await this.adapter.remove(trashed).catch(() => undefined);
+    } else {
+      await this.adapter.mkdir(dirname(original));
+      await this.adapter.rename(trashed, original);
+    }
+
+    this.emit({ type: 'create', path: original });
+    return original;
+  }
+
+  /** ごみ箱から完全に消す。ここだけが本当の削除。 */
+  async purgeTrash(trashed?: VPath): Promise<void> {
+    const target = trashed ?? TRASH_DIR;
+    if (!isInTrash(target) && target !== TRASH_DIR) {
+      throw new Error(`${target} はごみ箱の中ではありません。`);
+    }
+    await this.adapter.remove(target).catch(() => undefined);
+    this.emit({ type: 'refresh' });
   }
 
   async mkdir(path: VPath): Promise<void> {

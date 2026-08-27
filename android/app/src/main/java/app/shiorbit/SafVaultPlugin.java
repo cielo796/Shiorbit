@@ -103,7 +103,7 @@ public class SafVaultPlugin extends Plugin {
             Uri initial = saved == null
                 ? DocumentsContract.buildDocumentUri(
                     "com.android.externalstorage.documents",
-                    "primary:Documents/Obdisan"
+                    "primary:Documents/Shiorbit"
                 )
                 : Uri.parse(saved);
             intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initial);

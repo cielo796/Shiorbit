@@ -3,6 +3,7 @@ import type { CommandRegistry } from '../core/commands/CommandRegistry';
 export interface AppCommandActions {
   openQuickSwitcher: () => void;
   openSearch: () => void;
+  openTrash: () => void;
   createNote: () => void | Promise<void>;
   openDaily: () => void | Promise<void>;
   insertTemplate: () => void;
@@ -28,6 +29,7 @@ export function registerAppCommands(
   registry.register(
     { id: 'quick-switcher', name: 'ノートを開く（クイックスイッチャ）', hotkey: 'Ctrl+O', run: actions.openQuickSwitcher },
     { id: 'search', name: '全文検索', hotkey: 'Ctrl+Shift+F', run: actions.openSearch },
+    { id: 'trash', name: 'ごみ箱を開く', run: actions.openTrash },
     { id: 'new-note', name: '新しいノートを作る', run: actions.createNote },
     { id: 'daily-note', name: '今日のノートを開く', hotkey: 'Ctrl+Shift+D', run: actions.openDaily },
     { id: 'insert-template', name: 'テンプレートを挿入', run: actions.insertTemplate, available: actions.hasCurrentNote },

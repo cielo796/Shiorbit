@@ -14,53 +14,53 @@ async function addVault(fs: CapFilesystem, dir: string, file = 'note.md'): Promi
 }
 
 describe('resolveNativeVaultDir', () => {
-  it('新規インストールでは Documents/Obdisan を選ぶ', async () => {
+  it('新規インストールでは Documents/Shiorbit を選ぶ', async () => {
     const fs = createFakeCapacitorFs();
 
-    await expect(resolveNativeVaultDir(fs, 'Obdisan')).resolves.toBe('Obdisan');
+    await expect(resolveNativeVaultDir(fs, 'Shiorbit')).resolves.toBe('Shiorbit');
   });
 
-  it('Documents/Shiorbit を Documents/Obdisan へ移行する', async () => {
+  it('綴りを誤っていた Documents/Obdisan を Documents/Shiorbit へ移行する', async () => {
     const fs = createFakeCapacitorFs();
-    await addVault(fs, 'Shiorbit');
+    await addVault(fs, 'Obdisan');
 
-    await expect(resolveNativeVaultDir(fs, 'Obdisan')).resolves.toBe('Obdisan');
-    expect(fs.dump()).toContain('Obdisan/note.md');
-    expect(fs.dump()).not.toContain('Shiorbit/note.md');
+    await expect(resolveNativeVaultDir(fs, 'Shiorbit')).resolves.toBe('Shiorbit');
+    expect(fs.dump()).toContain('Shiorbit/note.md');
+    expect(fs.dump()).not.toContain('Obdisan/note.md');
   });
 
-  it('旧 Documents/Obidisan も Documents/Obdisan へ移行する', async () => {
+  it('旧 Documents/Obidisan も Documents/Shiorbit へ移行する', async () => {
     const fs = createFakeCapacitorFs();
     await addVault(fs, 'Obidisan');
 
-    await expect(resolveNativeVaultDir(fs, 'Obdisan')).resolves.toBe('Obdisan');
-    expect(fs.dump()).toContain('Obdisan/note.md');
+    await expect(resolveNativeVaultDir(fs, 'Shiorbit')).resolves.toBe('Shiorbit');
+    expect(fs.dump()).toContain('Shiorbit/note.md');
   });
 
-  it('Documents/Obdisan が既にあれば旧フォルダより優先する', async () => {
+  it('Documents/Shiorbit が既にあれば旧フォルダより優先する', async () => {
     const fs = createFakeCapacitorFs();
-    await addVault(fs, 'Obdisan', 'current.md');
-    await addVault(fs, 'Shiorbit', 'old.md');
+    await addVault(fs, 'Shiorbit', 'current.md');
+    await addVault(fs, 'Obdisan', 'old.md');
 
-    await expect(resolveNativeVaultDir(fs, 'Obdisan')).resolves.toBe('Obdisan');
-    expect(fs.dump()).toContain('Obdisan/current.md');
-    expect(fs.dump()).toContain('Shiorbit/old.md');
+    await expect(resolveNativeVaultDir(fs, 'Shiorbit')).resolves.toBe('Shiorbit');
+    expect(fs.dump()).toContain('Shiorbit/current.md');
+    expect(fs.dump()).toContain('Obdisan/old.md');
   });
 
   it('明示された別フォルダは変更しない', async () => {
     const fs = createFakeCapacitorFs();
-    await addVault(fs, 'Shiorbit');
+    await addVault(fs, 'Obdisan');
 
     await expect(resolveNativeVaultDir(fs, 'Custom')).resolves.toBe('Custom');
-    expect(fs.dump()).toContain('Shiorbit/note.md');
+    expect(fs.dump()).toContain('Obdisan/note.md');
   });
 
   it('改名に失敗した場合は元の Vault を開く', async () => {
     const base = createFakeCapacitorFs();
-    await addVault(base, 'Shiorbit');
+    await addVault(base, 'Obdisan');
     const fs: CapFilesystem = { ...base, rename: vi.fn().mockRejectedValue(new Error('permission denied')) };
 
-    await expect(resolveNativeVaultDir(fs, 'Obdisan')).resolves.toBe('Shiorbit');
-    expect(base.dump()).toContain('Shiorbit/note.md');
+    await expect(resolveNativeVaultDir(fs, 'Shiorbit')).resolves.toBe('Obdisan');
+    expect(base.dump()).toContain('Obdisan/note.md');
   });
 });

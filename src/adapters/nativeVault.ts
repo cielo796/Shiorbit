@@ -22,20 +22,17 @@ export async function openNativeCache(): Promise<KeyValueStore | null> {
 }
 
 /**
- * ネイティブアプリ（iOS / Android）の Vault を開く。
+ * Vault フォルダ名はアプリ名に揃える。
  *
- * Documents の下の固定フォルダを Vault にする。
- * iOS では Info.plist に UIFileSharingEnabled と LSSupportsOpeningDocumentsInPlace を
- * 入れておくことで、このフォルダが「ファイル」アプリに現れ、
- * iCloud Drive 経由で PC と同期できる（設計書 §4 / §9）。
- *
- * プラグインは動的 import する。ブラウザ向けのバンドルに Capacitor を混ぜないため。
+ * 一時期 'Obdisan'（'Obidisan' から i が1つ欠けた綴り）を既定にしていたので、
+ * それも移行元に入れてある。移行は「見つけた最初の1つを改名する」だけなので、
+ * どの状態から起動してもノートを見失わない。
  */
-const DEFAULT_VAULT_DIR = 'Obdisan';
-const PREVIOUS_VAULT_DIR = 'Shiorbit';
+const DEFAULT_VAULT_DIR = 'Shiorbit';
+const MISSPELLED_VAULT_DIR = 'Obdisan';
 const LEGACY_VAULT_DIR = 'Obidisan';
 
-const MIGRATION_SOURCES = [PREVIOUS_VAULT_DIR, LEGACY_VAULT_DIR] as const;
+const MIGRATION_SOURCES = [MISSPELLED_VAULT_DIR, LEGACY_VAULT_DIR] as const;
 
 async function directoryExists(fs: CapFilesystem, path: string): Promise<boolean> {
   return fs
@@ -73,6 +70,16 @@ export async function resolveNativeVaultDir(fs: CapFilesystem, subdir: string): 
   return DEFAULT_VAULT_DIR;
 }
 
+/**
+ * ネイティブアプリ（iOS / Android）の Vault を開く。
+ *
+ * Documents の下の固定フォルダを Vault にする。
+ * iOS では Info.plist に UIFileSharingEnabled と LSSupportsOpeningDocumentsInPlace を
+ * 入れておくことで、このフォルダが「ファイル」アプリに現れ、
+ * iCloud Drive 経由で PC と同期できる（設計書 §4 / §9）。
+ *
+ * プラグインは動的 import する。ブラウザ向けのバンドルに Capacitor を混ぜないため。
+ */
 export async function openNativeVault(subdir = DEFAULT_VAULT_DIR): Promise<NativeVault | null> {
   try {
     const mod = (await import('@capacitor/filesystem')) as unknown as {

@@ -4,7 +4,8 @@ import type { KeyValueStore } from '../core/storage/KeyValueStore';
 import { VaultService, type VaultEvent } from '../core/vault/VaultService';
 import { ConflictError, isVaultError } from '../core/vault/errors';
 import {
-  basename, dirname, isBase, isCanvas, isHtml, isMarkdown, isOpenable, isSupportedDocument, normalize,
+  basename, dirname, isAncestor, isBase, isCanvas, isHtml, isMarkdown, isOpenable,
+  isSupportedDocument, normalize,
 } from '../core/vault/path';
 import { Indexer } from '../core/index/Indexer';
 import { LIMITS, Settings, clamp } from '../core/settings/Settings';
@@ -22,6 +23,7 @@ import { Explorer } from './explorer';
 import { UnresolvedPane } from './unresolvedPane';
 import { SearchPane } from './searchPane';
 import { TagPane } from './tagPane';
+import { TrashPane } from './trashPane';
 import { QuickSwitcher } from './quickSwitcher';
 import { CommandPalette } from './commandPalette';
 import { SettingsModal } from './settingsModal';
@@ -43,6 +45,7 @@ import { askNewDocument } from './newDocumentDialog';
 import { BasesView } from './basesView';
 import { CanvasView } from './canvas/CanvasView';
 import { EmbedResolver } from './embed/embedResolver';
+import type { TrashEntry } from '../core/vault/trash';
 
 /** Vault の入手方法。実装は main.ts (合成ルート) から注入される。 */
 export interface VaultSource {
@@ -62,7 +65,7 @@ export interface AppDeps {
 }
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
-type Tab = 'files' | 'search' | 'tags' | 'unresolved';
+type Tab = 'files' | 'search' | 'tags' | 'unresolved' | 'trash';
 type HtmlViewMode = 'preview' | 'source';
 
 
@@ -76,6 +79,7 @@ export class App {
   private explorer: Explorer | null = null;
   private searchPane: SearchPane | null = null;
   private tagPane: TagPane | null = null;
+  private trashPane: TrashPane | null = null;
   private unresolvedPane: UnresolvedPane | null = null;
   private rightPane: RightPane | null = null;
   private graphModal: GraphModal | null = null;
@@ -176,6 +180,7 @@ export class App {
     registerAppCommands(this.commands, {
       openQuickSwitcher: () => this.switcher.open(),
       openSearch: () => { this.openSidebar(); this.setTab('search'); },
+      openTrash: () => { this.openSidebar(); this.setTab('trash'); },
       createNote: () => this.newDocument(),
       openDaily: () => this.openDaily(),
       insertTemplate: () => this.insertTemplate(),
@@ -415,6 +420,7 @@ export class App {
     this.explorer = null;
     this.searchPane = null;
     this.tagPane = null;
+    this.trashPane = null;
     this.unresolvedPane = null;
     this.mobileNav = null;
     this.mobileToolbar = null;
@@ -459,6 +465,7 @@ export class App {
     addTab('search', '検索', '全文検索');
     addTab('tags', 'タグ', 'タグ一覧');
     addTab('unresolved', '未解決', '未解決リンク（まだ書いていないノート）');
+    addTab('trash', 'ごみ箱', '削除したノート（ここから戻せます）');
 
     const paneHost = el('div', 'pane-host');
 
@@ -476,6 +483,11 @@ export class App {
     this.unresolvedPane = new UnresolvedPane({
       onCreate: (name) => void this.createFromName(name),
       onOpen: (p, offset) => void this.openNote(p, offset),
+    });
+    this.trashPane = new TrashPane({
+      onRestore: (entry) => void this.restoreFromTrash(entry),
+      onPurge: (entry) => void this.purgeTrash(entry),
+      onPurgeAll: () => void this.purgeTrash(),
     });
 
     sidebar.append(head, tabs, paneHost);
@@ -607,9 +619,11 @@ export class App {
       tab === 'files' ? this.explorer?.dom :
       tab === 'search' ? this.searchPane?.dom :
       tab === 'tags' ? this.tagPane?.dom :
+      tab === 'trash' ? this.trashPane?.dom :
       this.unresolvedPane?.dom;
     if (pane) els.paneHost.replaceChildren(pane);
     if (tab === 'search') this.searchPane?.focus();
+    if (tab === 'trash') void this.refreshTrash();
   }
 
   /**
@@ -682,6 +696,66 @@ export class App {
       this.explorer.setEntries(entries.filter((e) => e.kind === 'dir' || isOpenable(e.path)));
       this.explorer.setActive(this.currentPath);
       this.embeds?.setEntries(entries);
+    } catch (e) {
+      this.toast(errorMessage(e), true);
+    }
+  }
+
+  // --------------------------------------------------------------- ごみ箱
+
+  private async refreshTrash(): Promise<void> {
+    const vault = this.vault;
+    if (!vault || !this.trashPane) return;
+    try {
+      this.trashPane.setEntries(await vault.listTrash());
+    } catch (e) {
+      this.toast(errorMessage(e), true);
+    }
+  }
+
+  /** ごみ箱を出入りしたノートを索引へ反映する。フォルダなら中身ごと。 */
+  private async reindexAfterTrash(root: VPath): Promise<void> {
+    const index = this.index;
+    if (!index) return;
+    for (const path of index.paths()) {
+      if (path === root || isAncestor(root, path)) index.removeNote(path);
+    }
+    await this.refreshTrash();
+  }
+
+  private async restoreFromTrash(entry: TrashEntry): Promise<void> {
+    const vault = this.vault;
+    if (!vault) return;
+    try {
+      const restored = await vault.restoreFromTrash(entry.path);
+      await this.refreshTree();
+      await this.reindexAll();
+      await this.refreshTrash();
+      this.toast(`${restored} を戻しました。`);
+    } catch (e) {
+      this.toast(errorMessage(e), true);
+    }
+  }
+
+  /** entry を省略するとごみ箱ごと空にする。ここだけが本当の削除。 */
+  private async purgeTrash(entry?: TrashEntry): Promise<void> {
+    const vault = this.vault;
+    if (!vault) return;
+
+    const ok = await confirmDialog({
+      title: 'ごみ箱から完全に削除',
+      message: entry
+        ? `「${entry.original}」を完全に削除します。\n\nこの操作は取り消せません。`
+        : 'ごみ箱の中身をすべて完全に削除します。\n\nこの操作は取り消せません。',
+      confirmLabel: '完全に削除',
+      danger: true,
+    });
+    if (!ok) return;
+
+    try {
+      await vault.purgeTrash(entry?.path);
+      await this.refreshTrash();
+      this.toast(entry ? `${entry.original} を完全に削除しました。` : 'ごみ箱を空にしました。');
     } catch (e) {
       this.toast(errorMessage(e), true);
     }
@@ -1197,20 +1271,21 @@ export class App {
     if (!vault) return;
     const ok = await confirmDialog({
       title: '削除',
-      message: `「${path}」を削除します。
+      message: `「${path}」をごみ箱へ移します。
 
-この操作は取り消せません。`,
-      confirmLabel: '削除する',
+「ごみ箱」タブから元に戻せます。`,
+      confirmLabel: 'ごみ箱へ移す',
       danger: true,
     });
     if (!ok) return;
     try {
-      await vault.remove(path);
+      await vault.moveToTrash(path);
       this.index?.removeNote(path);
       this.viewStates.delete(path);
       if (this.currentPath === path) this.closeNote();
       await this.refreshTree();
-      this.toast(`${path} を削除しました。`);
+      await this.reindexAfterTrash(path);
+      this.toast(`${path} をごみ箱へ移しました。「ごみ箱」タブから戻せます。`);
     } catch (e) {
       this.toast(errorMessage(e), true);
     }

@@ -75,7 +75,7 @@ async function boot(): Promise<void> {
     return;
   }
 
-  // --- iOS: Documents/Obdisan を Vault として自動で開く
+  // --- iOS: Documents/Shiorbit を Vault として自動で開く
   if (platform.kind === 'ios') {
     const native = await openNativeVault();
     if (native) {

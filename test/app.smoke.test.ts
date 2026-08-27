@@ -2,6 +2,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { App, type VaultSource } from '../src/ui/app';
 import { MemoryAdapter, createDemoAdapter } from '../src/adapters/memory';
+import { originalPathOf } from '../src/core/vault/trash';
 
 /**
  * UI の煙感知器。
@@ -65,8 +66,8 @@ describe('App の起動', () => {
     expect(root.querySelector('.status-index')?.textContent ?? '').toMatch(/ノート/);
     // 右ペインが存在する
     expect(root.querySelector('.rightbar')).not.toBeNull();
-    // タブが4つ（ファイル / 検索 / タグ / 未解決）
-    expect(root.querySelectorAll('.sidebar-tabs .tab')).toHaveLength(4);
+    // タブが5つ（ファイル / 検索 / タグ / 未解決 / ごみ箱）
+    expect(root.querySelectorAll('.sidebar-tabs .tab')).toHaveLength(5);
   });
 
   it('ノートを開くとバックリンクと未解決リンクが出る', async () => {
@@ -742,5 +743,45 @@ describe('App の起動', () => {
 
     const saved = JSON.parse(await adapter.read('board.canvas')) as { nodes: unknown[] };
     expect(saved.nodes).toHaveLength(3);
+  });
+  it('削除はごみ箱へ移り、そこから元に戻せる', async () => {
+    const adapter = new MemoryAdapter('Trash UI');
+    await adapter.write('AI/Ollama.md', '# Ollama');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    const row = [...root.querySelectorAll('.tree .row')]
+      .find((node) => node.querySelector('.label')?.textContent === 'Ollama')!;
+    row.querySelector<HTMLButtonElement>('.del')!.click();
+    for (let i = 0; i < 4; i++) await tick();
+
+    const dialog = document.querySelector('.confirm-dialog')!;
+    expect(dialog.textContent).toContain('ごみ箱へ移します');
+    [...dialog.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent === 'ごみ箱へ移す')!.click();
+    for (let i = 0; i < 14; i++) await tick();
+
+    // 実体は消えていない。
+    expect(await adapter.exists('AI/Ollama.md')).toBe(false);
+    const trashed = await adapter.list('.trash', true);
+    expect(trashed.map((e) => originalPathOf(e.path))).toContain('AI/Ollama.md');
+    expect([...root.querySelectorAll('.tree .label')].some((l) => l.textContent === 'Ollama')).toBe(false);
+
+    // ごみ箱タブから戻す。
+    [...root.querySelectorAll<HTMLButtonElement>('.sidebar-tabs .tab')]
+      .find((b) => b.textContent === 'ごみ箱')!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    const trashRow = root.querySelector('.trash-row')!;
+    expect(trashRow.textContent).toContain('AI/Ollama.md');
+    [...trashRow.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent === '戻す')!.click();
+    for (let i = 0; i < 20; i++) await tick();
+
+    expect(await adapter.read('AI/Ollama.md')).toBe('# Ollama');
+    expect(root.querySelector('.trash-row')).toBeNull();
   });
 });

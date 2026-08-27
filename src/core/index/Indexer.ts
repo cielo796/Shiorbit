@@ -305,6 +305,11 @@ export class Indexer {
     return [...this.entries.values()].map(({ meta }) => meta);
   }
 
+  /** 索引にあるノートのパス。まとめて外すときに使う。 */
+  paths(): VPath[] {
+    return [...this.entries.keys()];
+  }
+
   /** 指定ノートから出ているリンク (未解決も含む) */
   outgoing(path: VPath): OutLink[] {
     return this.entries.get(path)?.out ?? [];

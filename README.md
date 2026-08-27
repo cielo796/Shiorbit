@@ -7,7 +7,8 @@ Obsidian 互換のローカル Markdown ノートアプリ。ノートの実体�
 |---|---|
 | [DESIGN.md](./DESIGN.md) | 設計 — アーキテクチャ、データモデル、境界、フェーズ計画 |
 | [CONVENTIONS.md](./CONVENTIONS.md) | コード規約 — 実装時に守るルールと、それを検査する仕組み |
-| [PHASE5.md](./PHASE5.md) | 次フェーズの実装仕様 — 現状の棚卸しと機能仕様 |
+| [PHASE5.md](./PHASE5.md) | Phase 5 の実装仕様（完了済み） |
+| [ROADMAP.md](./ROADMAP.md) | コードレビューの問題点と Phase 6〜10 の計画 |
 | README.md（この文書） | 使い方・ビルド手順・できること |
 
 **Phase 5（拡張）まで完了しました。** Phase 0〜4（土台 / ナレッジベース化 / 実用化 / グラフ / アプリ化）に加えて、
