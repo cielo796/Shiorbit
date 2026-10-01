@@ -11,6 +11,7 @@ export class OutlinePane {
   private readonly list: HTMLElement;
   private headings: Heading[] = [];
   private currentOffset = 0;
+  private activeOffset: number | null = null;
   private readonly items = new Map<number, HTMLElement>();
 
   constructor(private readonly opts: OutlinePaneOptions) {
@@ -21,6 +22,10 @@ export class OutlinePane {
   }
 
   setHeadings(headings: Heading[]): void {
+    if (headings.length === this.headings.length && headings.every((h, i) => {
+      const old = this.headings[i]!;
+      return h.offset === old.offset && h.text === old.text && h.level === old.level;
+    })) return;
     this.headings = [...headings];
     this.render();
   }
@@ -33,6 +38,7 @@ export class OutlinePane {
   private render(): void {
     this.dom.replaceChildren();
     this.items.clear();
+    this.activeOffset = null;
 
     const header = el('div', 'pane-header');
     header.append(el('span', undefined, 'アウトライン'), el('span', 'pane-count', String(this.headings.length)));
@@ -46,6 +52,7 @@ export class OutlinePane {
         const item = el('div', 'outline-item', heading.text || '(無題の見出し)');
         item.setAttribute('role', 'treeitem');
         item.setAttribute('aria-level', String(heading.level));
+        item.setAttribute('aria-current', 'false');
         item.tabIndex = 0;
         item.title = heading.text;
         item.style.setProperty('--outline-level', String(Math.max(0, heading.level - 1)));
@@ -70,15 +77,20 @@ export class OutlinePane {
   }
 
   private syncActive(): void {
-    let activeOffset: number | null = null;
-    for (const heading of this.headings) {
-      if (heading.offset > this.currentOffset) break;
-      activeOffset = heading.offset;
+    let lo = 0, hi = this.headings.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this.headings[mid]!.offset <= this.currentOffset) lo = mid + 1;
+      else hi = mid;
     }
-    for (const [offset, item] of this.items) {
-      const active = offset === activeOffset;
-      item.classList.toggle('active', active);
-      item.setAttribute('aria-current', active ? 'location' : 'false');
-    }
+    const next = this.headings[lo - 1]?.offset ?? null;
+    if (next === this.activeOffset) return;
+    const oldItem = this.activeOffset === null ? undefined : this.items.get(this.activeOffset);
+    oldItem?.classList.remove('active');
+    oldItem?.setAttribute('aria-current', 'false');
+    this.activeOffset = next;
+    const item = next === null ? undefined : this.items.get(next);
+    item?.classList.add('active');
+    item?.setAttribute('aria-current', 'location');
   }
 }

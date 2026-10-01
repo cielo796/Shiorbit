@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { OutlinePane } from '../src/ui/outlinePane';
 
 describe('OutlinePane', () => {
+  it('1000見出しでも同じ節内のカーソル移動ではDOM属性を書き換えない', () => {
+    const pane = new OutlinePane({ onReveal: vi.fn() });
+    const headings = Array.from({ length: 1000 }, (_, i) => ({ level: 2, text: `H${i}`, offset: i * 100 }));
+    pane.setHeadings(headings);
+    pane.setCurrentOffset(50100);
+    const original = pane.dom.querySelector('.outline-item');
+    const observer = new MutationObserver(() => {});
+    observer.observe(pane.dom, { attributes: true, childList: true, subtree: true });
+    for (let offset = 50101; offset < 50200; offset++) pane.setCurrentOffset(offset);
+    pane.setHeadings(headings.map(h => ({ ...h })));
+    expect(observer.takeRecords()).toHaveLength(0);
+    expect(pane.dom.querySelector('.outline-item')).toBe(original);
+    observer.disconnect();
+  });
   it('見出し階層を描画し、クリックしたオフセットを通知する', () => {
     const onReveal = vi.fn();
     const pane = new OutlinePane({ onReveal });

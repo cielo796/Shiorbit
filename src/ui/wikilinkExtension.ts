@@ -8,6 +8,7 @@ import {
   type CompletionResult,
 } from '@codemirror/autocomplete';
 import { isRevealed, revealedLines, shouldRecompute } from './previewState';
+import { EmbedWidget, type EmbedProvider } from './embed/embedWidget';
 
 export { refreshPreview as refreshWikilinks } from './previewState';
 
@@ -24,8 +25,11 @@ export interface WikilinkSuggestion {
  */
 export interface WikilinkProvider {
   isResolved: (target: string) => boolean;
-  follow: (target: string) => void;
+  /** aside=true なら隣のペインで開く（Ctrl+Alt+クリック） */
+  follow: (target: string, aside?: boolean) => void;
   suggest: () => WikilinkSuggestion[];
+  /** ![[...]] の中身。省略すると埋め込みは記法のまま表示される。 */
+  embeds?: EmbedProvider;
 }
 
 export interface WikilinkOptions {
@@ -40,12 +44,19 @@ const unresolvedMark = Decoration.mark({ class: 'cm-wikilink cm-wikilink-unresol
 const hide = Decoration.replace({});
 
 function targetOf(inner: string): string {
+  return splitInner(inner).target;
+}
+
+/** "AI/Ollama#見出し|別名" を分ける。target は .md を落とした形。 */
+function splitInner(inner: string): { target: string; subpath?: string } {
   let rest = inner;
   const pipe = rest.indexOf('|');
   if (pipe >= 0) rest = rest.slice(0, pipe);
   const hash = rest.indexOf('#');
+  const subpath = hash >= 0 ? rest.slice(hash).trim() : undefined;
   if (hash >= 0) rest = rest.slice(0, hash);
-  return rest.trim().replace(/\.md$/i, '');
+  const target = rest.trim().replace(/\.md$/i, '');
+  return subpath === undefined || subpath === '#' ? { target } : { target, subpath };
 }
 
 /** コードブロック・インラインコードの中かどうか (誤ってリンク扱いしないため) */
@@ -78,14 +89,26 @@ function build(view: EditorView, provider: WikilinkProvider, conceal: boolean): 
       const embed = m[1] === '!';
       if (inCode(state, start + 2)) continue;
 
-      const target = targetOf(inner);
+      const { target, subpath } = splitInner(inner);
       if (target === '') continue;
 
       const deco = provider.isResolved(target) ? resolvedMark : unresolvedMark;
       const end = start + m[0].length;
+      const raw = !conceal || isRevealed(state, revealed, start);
 
-      // 埋め込み ![[...]] とカーソル行は生のまま見せる
-      if (!conceal || embed || isRevealed(state, revealed, start)) {
+      // 埋め込みは中身に差し替える。カーソル行と Live Preview 無効時は記法のまま。
+      if (embed) {
+        if (raw || !provider.embeds) marks.push(deco.range(start, end));
+        else {
+          hiddenRanges.push(
+            Decoration.replace({ widget: new EmbedWidget(target, subpath, provider.embeds) })
+              .range(start, end),
+          );
+        }
+        continue;
+      }
+
+      if (raw) {
         marks.push(deco.range(start, end));
         continue;
       }
@@ -146,6 +169,24 @@ function linkAt(state: EditorState, pos: number): string | null {
 }
 
 const theme = EditorView.baseTheme({
+  '.cm-embed': { display: 'inline-block', maxWidth: '100%', verticalAlign: 'top', cursor: 'pointer' },
+  '.cm-embed-loading, .cm-embed-missing': {
+    color: 'var(--fg-faint)', fontSize: '0.9em', fontStyle: 'italic',
+  },
+  '.cm-embed-missing': { color: 'var(--unresolved)' },
+  '.cm-embed-image': {
+    display: 'block', maxWidth: '100%', height: 'auto',
+    borderRadius: '6px', border: '1px solid var(--border)',
+  },
+  '.cm-embed-note': {
+    display: 'block', borderLeft: '3px solid var(--accent-dim)',
+    background: 'var(--bg-elev)', borderRadius: '4px',
+    padding: '6px 10px', margin: '2px 0',
+  },
+  '.cm-embed-title': {
+    display: 'block', fontSize: '0.85em', color: 'var(--fg-faint)', marginBottom: '2px',
+  },
+  '.cm-embed-body': { display: 'block', whiteSpace: 'pre-wrap', color: 'var(--fg-dim)' },
   '.cm-wikilink': { color: 'var(--accent)', cursor: 'pointer' },
   '.cm-wikilink:hover': { textDecoration: 'underline' },
   '.cm-wikilink-unresolved': { color: 'var(--unresolved)', opacity: '0.85' },
@@ -195,7 +236,7 @@ export function wikilinkExtension(provider: WikilinkProvider, options: WikilinkO
         const target = linkAt(view.state, pos) ?? linkAt(view.state, pos + 2);
         if (target === null) return false;
         event.preventDefault();
-        provider.follow(target);
+        provider.follow(target, event.altKey);
         return true;
       },
     }),

@@ -9,6 +9,7 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 import { isRevealed, revealedLines, shouldRecompute } from './previewState';
+import { describeImage, imageReferences, MarkdownImageWidget, type MarkdownImageProvider } from './markdownImages';
 
 /** 水平線 (---) の代わりに出す罫線 */
 class RuleWidget extends WidgetType {
@@ -37,7 +38,8 @@ interface Built {
   hidden: DecorationSet;
 }
 
-function build(view: EditorView, enabled: boolean): Built {
+function build(view: EditorView, enabled: boolean, images?: MarkdownImageProvider,
+  refs?: () => ReturnType<typeof imageReferences>): Built {
   if (!enabled) return { all: Decoration.none, hidden: Decoration.none };
 
   const state = view.state;
@@ -58,6 +60,16 @@ function build(view: EditorView, enabled: boolean): Built {
       enter: (node) => {
         if (isRevealed(state, revealed, node.from)) return;
         const name = node.name;
+
+        if (name === 'Image') {
+          if (images && refs) {
+            const image = describeImage(node.node, state.doc, refs);
+            if (image) hiddenRanges.push(Decoration.replace({
+              widget: new MarkdownImageWidget(image, images.context(), images),
+            }).range(node.from, node.to));
+          }
+          return false;
+        }
 
         // --- 見出しの # を隠す (後続の空白ごと)
         if (name === 'HeaderMark') {
@@ -126,6 +138,8 @@ function build(view: EditorView, enabled: boolean): Built {
 }
 
 const theme = EditorView.baseTheme({
+  '.cm-md-image': { display: 'inline-block', maxWidth: '100%', verticalAlign: 'top' },
+  '.cm-md-image img': { display: 'block', maxWidth: '100%', height: 'auto', borderRadius: '6px' },
   '.cm-md-code': {
     background: 'var(--bg-elev)',
     borderRadius: '3px',
@@ -152,21 +166,31 @@ const theme = EditorView.baseTheme({
  * 隠した範囲は atomicRanges に登録してあり、カーソルが中に迷い込まない。
  * 動作が気に入らなければ設定でオフにできる。
  */
-export function livePreview(enabled: () => boolean): Extension {
+export function livePreview(enabled: () => boolean, images?: MarkdownImageProvider): Extension {
+  let referenceTree: ReturnType<typeof syntaxTree> | null = null;
+  let references: ReturnType<typeof imageReferences> = new Map();
+  const draw = (view: EditorView): Built => build(view, enabled(), images, () => {
+    const tree = syntaxTree(view.state);
+    if (tree !== referenceTree) {
+      references = imageReferences(tree, view.state.doc);
+      referenceTree = tree;
+    }
+    return references;
+  });
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
       hidden: DecorationSet;
 
       constructor(view: EditorView) {
-        const built = build(view, enabled());
+        const built = draw(view);
         this.decorations = built.all;
         this.hidden = built.hidden;
       }
 
       update(update: ViewUpdate): void {
         if (!shouldRecompute(update)) return;
-        const built = build(update.view, enabled());
+        const built = draw(update.view);
         this.decorations = built.all;
         this.hidden = built.hidden;
       }

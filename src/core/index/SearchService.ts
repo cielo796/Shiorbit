@@ -1,6 +1,8 @@
 import MiniSearch from 'minisearch';
 import type { VPath } from '../vault/types';
 import type { NoteMeta } from '../markdown/scan';
+import { frontmatterTags } from '../markdown/scan';
+import { searchText } from './searchText';
 
 export interface SearchHit {
   path: VPath;
@@ -59,15 +61,16 @@ interface Doc {
   title: string;
   body: string;
   tags: string;
+  autoTags: string;
 }
 
 const MINI_OPTIONS = {
-  fields: ['title', 'body', 'tags'],
+  fields: ['title', 'body', 'tags', 'autoTags'],
   storeFields: [],
   tokenize,
   processTerm: (term: string) => term.toLowerCase(),
   searchOptions: {
-    boost: { title: 4, tags: 2 },
+    boost: { title: 4, tags: 2, autoTags: 2 },
     prefix: true,
     combineWith: 'AND' as const,
   },
@@ -89,9 +92,9 @@ export class SearchService {
    * 文字列化された索引を復元する。
    * MiniSearch のバージョンが変わると読めないので、失敗したら false を返して全件作り直させる。
    */
-  restore(json: string): boolean {
+  async restore(json: string): Promise<boolean> {
     try {
-      this.mini = MiniSearch.loadJSON<Doc>(json, MINI_OPTIONS);
+      this.mini = await MiniSearch.loadJSONAsync<Doc>(json, MINI_OPTIONS);
       return true;
     } catch (e) {
       console.warn('[SearchService] 索引の復元に失敗したため作り直します', e);
@@ -106,11 +109,13 @@ export class SearchService {
 
   put(meta: NoteMeta, text: string): void {
     this.remove(meta.path);
+    const manual = frontmatterTags(meta.frontmatter);
     this.mini.add({
       id: meta.path,
       title: `${meta.basename} ${meta.path}`,
-      body: text,
-      tags: meta.tags.join(' '),
+      body: searchText(meta.path, text),
+      tags: manual.join(' '),
+      autoTags: meta.tags.filter((tag) => !manual.includes(tag)).join(' '),
     });
   }
 
@@ -118,11 +123,12 @@ export class SearchService {
     if (this.mini.has(path)) this.mini.discard(path);
   }
 
-  search(query: string, limit = 50): SearchHit[] {
+  search(query: string, limit = 50, autoCollectTags = true): SearchHit[] {
     const q = query.trim();
     if (q === '') return [];
     return this.mini
-      .search(q)
+      // OFFでも本文中の文字は通常の全文検索対象。タグとしての加点だけ外す。
+      .search(q, { fields: autoCollectTags ? ['title', 'body', 'tags', 'autoTags'] : ['title', 'body', 'tags'] })
       .slice(0, limit)
       .map((r) => ({ path: r.id as VPath, score: r.score }));
   }

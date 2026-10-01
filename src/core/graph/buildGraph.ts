@@ -101,9 +101,10 @@ export function buildGraph(input: GraphInput[], options: BuildOptions = {}): Gra
 
   // --- 上限を超えたら次数の高い順に残す
   if (alive.size > maxNodes) {
+    const degrees = new Map([...alive].map((id) => [id, degreeWithin(adjacency, id, alive)]));
     const ranked = [...alive].sort(
       (a, b) =>
-        degreeWithin(adjacency, b, alive) - degreeWithin(adjacency, a, alive) ||
+        degrees.get(b)! - degrees.get(a)! ||
         a.localeCompare(b), // 同順位のときも結果がぶれないように
     );
     alive.clear();

@@ -1,7 +1,20 @@
 import type { VaultAdapter } from './VaultAdapter';
 import type { Entry, FileEvent, Unsubscribe, VPath } from './types';
 import { ConflictError, isVaultError } from './errors';
-import { isHidden, isMarkdown, isSupportedDocument } from './path';
+import {
+  basename, dirname, isAncestor, isHidden, isMarkdown, isOpenable, isSupportedDocument, join, segments,
+} from './path';
+import { conflictPathFor, formatConflictStamp, isConflictCopy } from './conflict';
+import {
+  TRASH_DIR,
+  collectTrashEntries,
+  formatTrashStamp,
+  freeStamp,
+  isInTrash,
+  originalPathOf,
+  trashPathFor,
+  type TrashEntry,
+} from './trash';
 
 export interface NoteContent {
   path: VPath;
@@ -24,6 +37,8 @@ export interface VaultServiceOptions {
 }
 
 export interface WatchOptions {
+  /** 起動時に取得済みの一覧。初回の監視用走査を省く。 */
+  initialEntries?: readonly Entry[];
   /** caps.watch が false のときのポーリング間隔 (ms) */
   intervalMs?: number;
 }
@@ -37,9 +52,15 @@ export interface WatchOptions {
 export class VaultService {
   private readonly listeners = new Set<(ev: VaultEvent) => void>();
   private stopFn: Unsubscribe | null = null;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private watching = false;
+  private watchingPaused = false;
+  private watchGeneration = 0;
+  private watchInterval = 5000;
   /** ポーリング比較用スナップショット path -> mtime */
   private snapshot = new Map<VPath, number>();
+  private polling: Promise<FileEvent[]> | null = null;
+  private baseline: Promise<void> | null = null;
 
   constructor(
     private readonly adapter: VaultAdapter,
@@ -103,7 +124,12 @@ export class VaultService {
   /** ツリー表示用。ディレクトリと、エディタで開けるファイルだけを返す。 */
   async listDocumentTree(): Promise<Entry[]> {
     const all = await this.listAll();
-    return all.filter((e) => e.kind === 'dir' || isSupportedDocument(e.path));
+    return all.filter((e) => e.kind === 'dir' || isOpenable(e.path));
+  }
+
+  /** 画像などの添付ファイル。テキストとして読めないものはこちらを使う。 */
+  readBinary(path: VPath): Promise<ArrayBuffer> {
+    return this.adapter.readBinary(path);
   }
 
   async readNote(path: VPath): Promise<NoteContent> {
@@ -154,6 +180,17 @@ export class VaultService {
     this.emit({ type: 'create', path });
   }
 
+  /** 画像などのバイナリを、既存ファイルを上書きせずVaultへ追加する。 */
+  async createBinary(path: VPath, data: ArrayBuffer): Promise<void> {
+    if (await this.adapter.exists(path)) {
+      throw new ConflictError(path, 0, Date.now());
+    }
+    await this.adapter.writeBinary(path, data);
+    const after = await this.safeStat(path);
+    this.snapshot.set(path, after?.mtime ?? Date.now());
+    this.emit({ type: 'create', path });
+  }
+
   async rename(from: VPath, to: VPath): Promise<void> {
     await this.adapter.rename(from, to);
     this.snapshot.delete(from);
@@ -166,6 +203,95 @@ export class VaultService {
     this.emit({ type: 'delete', path });
   }
 
+  // --------------------------------------------------------------- ごみ箱
+
+  /**
+   * 削除の代わりに `.trash/` へ移す（設計方針: データを黙って捨てない）。
+   *
+   * フォルダは中のファイルを1件ずつ移す。
+   * File System Access API の rename はファイルしか動かせないので、
+   * アダプタごとの差に頼らずに済ませるため。
+   */
+  async moveToTrash(path: VPath): Promise<VPath> {
+    const entries = await this.adapter.list('', true);
+    const taken = new Set(
+      entries
+        .filter((entry) => segments(entry.path).length === 2 && isInTrash(entry.path))
+        .map((entry) => basename(entry.path)),
+    );
+    const stamp = freeStamp(formatTrashStamp(new Date()), path, taken);
+    const target = trashPathFor(stamp, path);
+
+    await this.adapter.mkdir(TRASH_DIR).catch(() => undefined);
+    const self = entries.find((entry) => entry.path === path);
+
+    if (self?.kind === 'dir') {
+      const files = entries.filter((entry) => entry.kind === 'file' && isAncestor(path, entry.path));
+      await this.adapter.mkdir(target);
+      for (const file of files) {
+        const moved = join(target, file.path.slice(path.length + 1));
+        await this.adapter.mkdir(dirname(moved));
+        await this.adapter.rename(file.path, moved);
+      }
+      await this.adapter.remove(path);
+    } else {
+      await this.adapter.rename(path, target);
+    }
+
+    this.snapshot.delete(path);
+    this.emit({ type: 'delete', path });
+    return target;
+  }
+
+  /** ごみ箱の中身。戻す単位（消したときに選んだもの）だけを返す。 */
+  async listTrash(): Promise<TrashEntry[]> {
+    const entries = await this.adapter.list(TRASH_DIR, true).catch(() => []);
+    return collectTrashEntries(entries.filter((entry) => isInTrash(entry.path)));
+  }
+
+  /**
+   * ごみ箱から元の場所へ戻す。
+   * 同じ名前が既にあるときは上書きせず、呼び出し側にエラーを返す。
+   */
+  async restoreFromTrash(trashed: VPath): Promise<VPath> {
+    const original = originalPathOf(trashed);
+    if (original === null) throw new Error(`${trashed} はごみ箱の中ではありません。`);
+    if (await this.adapter.exists(original)) {
+      throw new Error(`${original} は既にあります。先に名前を変えてください。`);
+    }
+
+    const entries = await this.adapter.list(TRASH_DIR, true).catch(() => []);
+    const self = entries.find((entry) => entry.path === trashed);
+
+    if (self?.kind === 'dir') {
+      const files = entries.filter((entry) => entry.kind === 'file' && isAncestor(trashed, entry.path));
+      await this.adapter.mkdir(original);
+      for (const file of files) {
+        const back = originalPathOf(file.path);
+        if (back === null) continue;
+        await this.adapter.mkdir(dirname(back));
+        await this.adapter.rename(file.path, back);
+      }
+      await this.adapter.remove(trashed).catch(() => undefined);
+    } else {
+      await this.adapter.mkdir(dirname(original));
+      await this.adapter.rename(trashed, original);
+    }
+
+    this.emit({ type: 'create', path: original });
+    return original;
+  }
+
+  /** ごみ箱から完全に消す。ここだけが本当の削除。 */
+  async purgeTrash(trashed?: VPath): Promise<void> {
+    const target = trashed ?? TRASH_DIR;
+    if (!isInTrash(target) && target !== TRASH_DIR) {
+      throw new Error(`${target} はごみ箱の中ではありません。`);
+    }
+    await this.adapter.remove(target).catch(() => undefined);
+    this.emit({ type: 'refresh' });
+  }
+
   async mkdir(path: VPath): Promise<void> {
     await this.adapter.mkdir(path);
     this.emit({ type: 'create', path });
@@ -176,15 +302,16 @@ export class VaultService {
    * どちらを選んでも、失われる側は必ずファイルとして残す (設計書 §9)。
    */
   async saveConflictCopy(path: VPath, text: string): Promise<VPath> {
-    const stamp = formatStamp(new Date());
-    const dot = path.lastIndexOf('.');
-    const target =
-      dot > 0
-        ? `${path.slice(0, dot)}.conflict-${stamp}${path.slice(dot)}`
-        : `${path}.conflict-${stamp}`;
+    const target = conflictPathFor(path, formatConflictStamp(new Date()));
     await this.adapter.write(target, text);
     this.emit({ type: 'create', path: target });
     return target;
+  }
+
+  /** 退避した競合ファイルの一覧。片付けの導線に使う。 */
+  async listConflicts(): Promise<VPath[]> {
+    const all = await this.listAll();
+    return all.filter((entry) => entry.kind === 'file' && isConflictCopy(entry.path)).map((e) => e.path);
   }
 
   // --------------------------------------------------------------- watching
@@ -198,67 +325,110 @@ export class VaultService {
       return;
     }
 
-    const interval = opts.intervalMs ?? 5000;
-    void this.captureSnapshot();
-    this.timer = setInterval(() => {
-      void this.poll();
-    }, interval);
+    this.watchInterval = Math.max(1, opts.intervalMs ?? 5000);
+    this.watching = true;
+    const generation = this.watchGeneration;
+    this.baseline = this.captureSnapshot(opts.initialEntries);
+    void this.baseline.then(() => this.schedulePoll(generation));
   }
 
   stopWatching(): void {
+    this.watchGeneration++;
+    this.watching = false;
     this.stopFn?.();
     this.stopFn = null;
     if (this.timer !== null) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
   }
 
+  /** バックグラウンドでは走査を止める。比較用の一覧は保持して復帰時の変更を検出する。 */
+  setWatchingPaused(paused: boolean): void {
+    if (this.watchingPaused === paused) return;
+    this.watchingPaused = paused;
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+    if (!paused) this.schedulePoll(this.watchGeneration);
+  }
+
+  private schedulePoll(generation: number): void {
+    if (!this.watching || this.watchingPaused || generation !== this.watchGeneration || this.timer !== null) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      // 遅い SAF 走査の終了から次の間隔を数える。固定周期で連続走査しない。
+      void this.poll().finally(() => this.schedulePoll(generation));
+    }, this.watchInterval);
+  }
+
   /** フォーカス復帰時などに明示的に1回だけ差分を取る */
-  async poll(): Promise<FileEvent[]> {
-    let entries: Entry[];
+  poll(): Promise<FileEvent[]> {
+    // フォーカス復帰とタイマーが重なっても、走査とイベント通知は一度だけ。
+    if (this.polling) return this.polling;
+    this.polling = this.pollOnce().finally(() => { this.polling = null; });
+    return this.polling;
+  }
+
+  private async pollOnce(): Promise<FileEvent[]> {
+    const generation = this.watchGeneration;
+    await this.baseline;
+    if (generation !== this.watchGeneration) return [];
+    let mtimes: Map<VPath, number>;
     try {
-      entries = await this.listAll();
+      mtimes = await this.readMtimes();
     } catch (error) {
-      this.emit({ type: 'error', error });
+      if (generation === this.watchGeneration) this.emit({ type: 'error', error });
       return [];
     }
+    if (generation !== this.watchGeneration) return [];
 
-    const next = new Map<VPath, number>();
     const events: FileEvent[] = [];
-
-    for (const entry of entries) {
-      if (entry.kind !== 'file') continue;
-      const stat = await this.safeStat(entry.path);
-      if (!stat) continue;
-      next.set(entry.path, stat.mtime);
-
-      const prev = this.snapshot.get(entry.path);
-      if (prev === undefined) {
-        events.push({ type: 'create', path: entry.path });
-      } else if (prev !== stat.mtime) {
-        events.push({ type: 'modify', path: entry.path });
-      }
+    for (const [path, mtime] of mtimes) {
+      const previous = this.snapshot.get(path);
+      if (previous === undefined) events.push({ type: 'create', path });
+      else if (previous !== mtime) events.push({ type: 'modify', path });
     }
-
     for (const path of this.snapshot.keys()) {
-      if (!next.has(path)) events.push({ type: 'delete', path });
+      if (!mtimes.has(path)) events.push({ type: 'delete', path });
     }
 
-    this.snapshot = next;
+    this.snapshot = mtimes;
     for (const ev of events) this.emit(ev);
     return events;
   }
 
-  private async captureSnapshot(): Promise<void> {
-    this.snapshot.clear();
-    try {
-      for (const entry of await this.listAll()) {
-        if (entry.kind !== 'file') continue;
-        const stat = await this.safeStat(entry.path);
-        if (stat) this.snapshot.set(entry.path, stat.mtime);
+  /**
+   * 全ファイルの mtime を1周ぶん集める。
+   *
+   * **一覧で mtime まで返せるアダプタでは、ファイルごとの stat を呼ばない。**
+   * File System Access API や SAF ではファイル1件ごとの往復が高くつき、
+   * 1万ノートなら5秒ごとに1万回になってしまうため（ROADMAP 7.3）。
+   */
+  private async readMtimes(entries?: readonly Entry[]): Promise<Map<VPath, number>> {
+    const out = new Map<VPath, number>();
+
+    for (const entry of entries ?? await this.listAll(true)) {
+      if (entry.kind !== 'file') continue;
+      if (entry.mtime !== undefined) {
+        out.set(entry.path, entry.mtime);
+        continue;
       }
+      // 一覧で mtime を返さないアダプタだけ、個別に聞きに行く。
+      const stat = await this.safeStat(entry.path);
+      if (stat) out.set(entry.path, stat.mtime);
+    }
+
+    return out;
+  }
+
+  private async captureSnapshot(entries?: readonly Entry[]): Promise<void> {
+    const generation = this.watchGeneration;
+    try {
+      const snapshot = await this.readMtimes(entries);
+      if (generation === this.watchGeneration) this.snapshot = snapshot;
     } catch (error) {
+      if (generation !== this.watchGeneration) return;
+      this.snapshot.clear();
       this.emit({ type: 'error', error });
     }
   }
@@ -279,12 +449,8 @@ export class VaultService {
 }
 
 /** ディレクトリを先に、次に名前順 (数字は自然順) */
+const entryCollator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
 function compareEntries(a: Entry, b: Entry): number {
   if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
-  return a.path.localeCompare(b.path, 'ja', { numeric: true, sensitivity: 'base' });
-}
-
-function formatStamp(d: Date): string {
-  const p = (n: number, w = 2) => String(n).padStart(w, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+  return entryCollator.compare(a.path, b.path);
 }

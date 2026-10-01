@@ -55,6 +55,21 @@ export function isHtml(p: VPath): boolean {
   return ext === '.html' || ext === '.htm';
 }
 
+/** プロパティの表 (.base)。エディタではなく表として開く。 */
+export function isBase(p: VPath): boolean {
+  return extname(p).toLowerCase() === '.base';
+}
+
+/** ホワイトボード (.canvas)。Obsidian と同じ JSON 形式。 */
+export function isCanvas(p: VPath): boolean {
+  return extname(p).toLowerCase() === '.canvas';
+}
+
+/** ツリーに出す、Shiorbit が開けるファイル。 */
+export function isOpenable(p: VPath): boolean {
+  return isSupportedDocument(p) || isBase(p) || isCanvas(p);
+}
+
 /** Shiorbit がテキストとして開いて編集できるファイル。 */
 export function isSupportedDocument(p: VPath): boolean {
   return isMarkdown(p) || isHtml(p);
@@ -63,6 +78,24 @@ export function isSupportedDocument(p: VPath): boolean {
 /** 対応ドキュメントの拡張子だけを取り除く。 */
 export function stripDocumentExtension(p: VPath): string {
   return isSupportedDocument(p) ? p.slice(0, -extname(p).length) : p;
+}
+
+/**
+ * fromDir から to へ辿るための相対パス。
+ * HTML の href のように、ファイルからの相対で書かれた参照を書き直すときに使う。
+ */
+export function relative(fromDir: VPath, to: VPath): string {
+  const base = segments(fromDir);
+  const target = segments(to);
+
+  let common = 0;
+  while (common < base.length && common < target.length - 1 && base[common] === target[common]) {
+    common++;
+  }
+
+  const ups = Array.from({ length: base.length - common }, () => '..');
+  const rest = target.slice(common);
+  return [...ups, ...rest].join('/');
 }
 
 /** parent が child の祖先か (parent === '' はルートなので常に true) */

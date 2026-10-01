@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryAdapter } from '../src/adapters/memory';
 import { VaultService, type VaultEvent } from '../src/core/vault/VaultService';
 import { ConflictError } from '../src/core/vault/errors';
@@ -10,6 +10,18 @@ import { ConflictError } from '../src/core/vault/errors';
  * MemoryAdapter を差し込むだけでコアが完全に動く = 境界が正しく引けている。
  */
 describe('VaultService', () => {
+  it('監視とフォーカス復帰が重なっても走査・通知は重複しない', async () => {
+    const memory = new MemoryAdapter('T');
+    await memory.write('a.md', '# A');
+    const list = vi.spyOn(memory, 'list');
+    const service = new VaultService(memory);
+    const changed = vi.fn();
+    service.on(changed);
+    await Promise.all([service.poll(), service.poll(), service.poll()]);
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(await service.poll()).toEqual([]);
+  });
   let adapter: MemoryAdapter;
   let vault: VaultService;
 
@@ -100,6 +112,15 @@ describe('VaultService', () => {
     await adapter.write('a.md', 'v1');
     await expect(vault.createNote('a.md', 'new')).rejects.toBeInstanceOf(ConflictError);
     expect(await adapter.read('a.md')).toBe('v1');
+  });
+
+  it('createBinary が画像を保存し、同名ファイルを上書きしない', async () => {
+    const data = new Uint8Array([1, 2, 3]).buffer;
+    await vault.createBinary('attachments/photo.png', data);
+    expect([...new Uint8Array(await adapter.readBinary('attachments/photo.png'))]).toEqual([1, 2, 3]);
+    await expect(vault.createBinary('attachments/photo.png', new ArrayBuffer(1)))
+      .rejects.toBeInstanceOf(ConflictError);
+    expect([...new Uint8Array(await adapter.readBinary('attachments/photo.png'))]).toEqual([1, 2, 3]);
   });
 
   it('poll が外部の作成・変更・削除を検知する', async () => {

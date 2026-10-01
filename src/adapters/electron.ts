@@ -5,6 +5,7 @@
  * ファイルの読み書きそのものはメインプロセスで行われる（設計書 §4）。
  */
 import type { VaultAdapter } from '../core/vault/VaultAdapter';
+import type { Entry } from '../core/vault/types';
 import type { KeyValueStore } from '../core/storage/KeyValueStore';
 import type { DirEntry, FsBridge, FsStat } from './node';
 import { createNodeAdapter } from './node';
@@ -15,7 +16,8 @@ interface NativeFs {
   readBytes: (p: string) => Promise<Uint8Array>;
   writeText: (p: string, text: string) => Promise<void>;
   writeBytes: (p: string, data: Uint8Array) => Promise<void>;
-  readDir: (p: string) => Promise<DirEntry[]>;
+  readDir: (p: string, withStat?: boolean) => Promise<DirEntry[]>;
+  listTree?: (p: string, withStat?: boolean) => Promise<Entry[]>;
   stat: (p: string) => Promise<FsStat>;
   mkdirp: (p: string) => Promise<void>;
   remove: (p: string) => Promise<void>;

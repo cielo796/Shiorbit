@@ -1,4 +1,4 @@
-import { computeLayout } from '../../core/graph/layout';
+import { createLayout } from '../../core/graph/layout';
 import type { GraphData } from '../../core/graph/types';
 
 export interface TickPayload {
@@ -21,7 +21,7 @@ export interface LayoutSession {
  *
  * Worker が使える環境ではそちらへ丸ごと逃がし、メインスレッドは描画だけにする。
  * 使えない環境（古いブラウザ、テストの jsdom など）では、
- * 一度だけまとめて計算して静止したグラフを描く。動きは無くなるが、内容は同じ。
+ * 短い時間に分割して計算し、入力イベントを処理する時間を残す。
  */
 export function startLayout(data: GraphData, width: number, height: number): LayoutSession {
   const worker = createWorker();
@@ -76,15 +76,28 @@ function mainThreadSession(data: GraphData, width: number, height: number): Layo
   let tickCb: ((p: TickPayload) => void) | null = null;
   let idsCb: ((ids: string[]) => void) | null = null;
 
+  const engine = createLayout(data, { width, height });
+  let remaining = data.nodes.length > 400 ? 120 : 220;
+  let scheduled: ReturnType<typeof setTimeout>;
+  let sentIds = false;
   const emit = (): void => {
     if (stopped) return;
-    const positions = computeLayout(data, { width, height }, data.nodes.length > 400 ? 120 : 220);
-    idsCb?.(positions.ids);
-    tickCb?.({ xs: positions.xs, ys: positions.ys, alpha: 0 });
+    const started = performance.now();
+    let steps = 0;
+    do {
+      engine.tick(1);
+      remaining--;
+      steps++;
+    } while (remaining > 0 && steps < 16 && performance.now() - started < 8);
+    const positions = engine.positions();
+    if (!sentIds) { idsCb?.(positions.ids); sentIds = true; }
+    tickCb?.({ xs: positions.xs, ys: positions.ys, alpha: remaining === 0 ? 0 : engine.alpha() });
+    if (!stopped && remaining > 0) scheduled = setTimeout(emit, 16);
+    else engine.stop();
   };
 
   // 呼び出し側が onTick を登録するまで待つ
-  const scheduled = setTimeout(emit, 0);
+  scheduled = setTimeout(emit, 0);
 
   return {
     onTick: (cb) => {
@@ -93,10 +106,11 @@ function mainThreadSession(data: GraphData, width: number, height: number): Layo
     onIds: (cb) => {
       idsCb = cb;
     },
-    pin: () => undefined,
+    pin: (id, x, y) => engine.pin(id, x, y),
     stop: () => {
       stopped = true;
       clearTimeout(scheduled);
+      engine.stop();
     },
   };
 }

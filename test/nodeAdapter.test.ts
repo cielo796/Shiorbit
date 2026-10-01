@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -26,6 +26,18 @@ runAdapterContract('NodeAdapter (実ファイルシステム)', {
 });
 
 describe('NodeAdapter — ディスク上の実体を確認する', () => {
+  it('1000ファイルの更新時刻を一覧で受け取り、ファイルごとのIPCを発生させない', async () => {
+    const bridge = await createNodeFsBridge();
+    bridge.readDir = vi.fn(async () => Array.from({ length: 1000 }, (_, i) => ({
+      name: `note${i}.md`, isDirectory: false, mtimeMs: 123, size: 42,
+    })));
+    bridge.stat = vi.fn();
+    const entries = await createNodeAdapter(bridge, 'C:\\fixture').list('', true, true);
+    expect(entries).toHaveLength(1000);
+    expect(entries[999]?.mtime).toBe(123);
+    expect(bridge.readDir).toHaveBeenCalledTimes(1);
+    expect(bridge.stat).not.toHaveBeenCalled();
+  });
   let dir = '';
 
   beforeEach(async () => {
@@ -61,5 +73,51 @@ describe('NodeAdapter — ディスク上の実体を確認する', () => {
     const adapter = createNodeAdapter(await createNodeFsBridge(), dir, 'T');
     expect(adapter.caps.realFolder).toBe(true);
     expect(adapter.id).toBe('node');
+  });
+});
+
+describe('IPC 越しのエラー（Electron）', () => {
+  /** ipcMain.handle は message だけを渡し、error.code は落とす。 */
+  function bridgeThatFails(message: string): Parameters<typeof createNodeAdapter>[0] {
+    const fail = (): never => {
+      throw new Error(message);
+    };
+    return {
+      readText: fail,
+      readBytes: fail,
+      writeText: fail,
+      writeBytes: fail,
+      readDir: fail,
+      stat: fail,
+      mkdirp: fail,
+      remove: fail,
+      rename: fail,
+    } as unknown as Parameters<typeof createNodeAdapter>[0];
+  }
+
+  it('メッセージの先頭のコードを読んで ENOENT を見分ける', async () => {
+    const adapter = createNodeAdapter(
+      bridgeThatFails("ENOENT: no such file or directory, open 'x'"),
+      'C:/vault',
+      'T',
+    );
+
+    await expect(adapter.read('missing.md')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('Electron が付ける前置きが入っていても読める', async () => {
+    const adapter = createNodeAdapter(
+      bridgeThatFails("Error occurred in handler for 'fs:readText': ENOENT: no such file"),
+      'C:/vault',
+      'T',
+    );
+
+    await expect(adapter.read('missing.md')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('コードが分からないものは入出力エラーのままにする', async () => {
+    const adapter = createNodeAdapter(bridgeThatFails('disk on fire'), 'C:/vault', 'T');
+
+    await expect(adapter.read('x.md')).rejects.toMatchObject({ code: 'EIO' });
   });
 });
