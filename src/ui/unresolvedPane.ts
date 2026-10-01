@@ -1,6 +1,7 @@
 import type { VPath } from '../core/vault/types';
 import type { UnresolvedGroup } from '../core/index/Indexer';
 import { el, noteLabel } from './dom';
+import { limitContext } from '../core/text/excerpt';
 
 export interface UnresolvedPaneOptions {
   onCreate: (name: string) => void;
@@ -43,7 +44,7 @@ export class UnresolvedPane {
 
       for (const src of group.sources) {
         const from = el('div', 'unresolved-source', noteLabel(src.path));
-        from.title = `${src.path}: ${src.context}`;
+        from.title = `${src.path}: ${limitContext(src.context)}`;
         from.addEventListener('click', (e) => {
           e.stopPropagation();
           this.opts.onOpen(src.path, src.ref.from);

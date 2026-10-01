@@ -2,20 +2,21 @@ import type { Entry as VaultEntry, Unsubscribe, VPath } from '../vault/types';
 import type { VaultService } from '../vault/VaultService';
 import type { LinkRef } from '../markdown/wikilink';
 import type { NoteMeta } from '../markdown/scan';
-import { aliasesOf, displayTitle, extractContext, frontmatterTags } from '../markdown/scan';
+import { aliasesOf, displayTitle, frontmatterTags } from '../markdown/scan';
 import { isSupportedDocument, stripDocumentExtension } from '../vault/path';
 import { scanDocument } from './scanDocument';
 import { emptyTables, resolveLink, type ResolveTables } from './resolver';
 import { SearchService, makeSnippet } from './SearchService';
 import { searchText } from './searchText';
 import { nullStore, type KeyValueStore } from '../storage/KeyValueStore';
-import { CACHE_VERSION, cacheKey, validateCache, type CachedIndex } from './IndexCache';
+import { CACHE_VERSION, cacheKey, legacyCacheKey, validateCache, type CachedIndex } from './IndexCache';
+import { linkContext } from './linkContext';
 import type { GraphInput } from '../graph/types';
 import { matchSnippet, type MatchText, type VaultMatches } from '../search/matches';
 
 export interface OutLink {
   ref: LinkRef;
-  /** リンクが書かれている行 */
+  /** リンク付近の短い表示テキスト。元本文の行全体は保持しない。 */
   context: string;
   /** 解決先。null なら未解決 (まだ存在しないノートへの言及) */
   resolved: VPath | null;
@@ -95,6 +96,8 @@ export class Indexer {
   private cacheDirty = false;
   private cacheRevision = 0;
   private persisting: Promise<void> | null = null;
+  private legacyCleanup: Promise<void> | null = null;
+  private legacyCleaned = false;
   private lastReport: BuildReport = { scanned: 0, reused: 0, ms: 0 };
   private autoCollectTags: boolean;
 
@@ -134,6 +137,8 @@ export class Indexer {
     let cacheReused = false;
     if (cached && await this.search.restore(cached.search)) {
       cacheReused = true;
+      // 新形式が既に保存済みなら、旧形式は読み込まずに削除できる。
+      void this.cleanupLegacyCache();
       const previous = new Map(cached.entries.map((e) => [e.meta.path, e]));
       const alive = new Set<VPath>();
 
@@ -220,7 +225,7 @@ export class Indexer {
     });
     const out: OutLink[] = [...meta.links, ...meta.embeds].map((ref) => ({
       ref,
-      context: extractContext(note.text, ref.from, ref.to),
+      context: linkContext(path, note.text, ref),
       resolved: null,
     }));
     this.entries.set(path, { meta, out });
@@ -318,9 +323,22 @@ export class Indexer {
     try {
       await this.cache.set(cacheKey(this.vault.name), payload);
       if (revision === this.cacheRevision) this.cacheDirty = false;
+      // 新形式の保存が成功した後だけ、同じVaultの旧索引を整理する。
+      await this.cleanupLegacyCache();
     } catch (e) {
       console.warn('[Indexer] キャッシュの保存に失敗しました', e);
     }
+  }
+
+  private cleanupLegacyCache(): Promise<void> {
+    if (this.legacyCleaned || this.cache === nullStore) return Promise.resolve();
+    if (this.legacyCleanup) return this.legacyCleanup;
+    this.legacyCleanup = this.cache.delete(legacyCacheKey(this.vault.name)).then(() => {
+      this.legacyCleaned = true;
+    }).catch((error) => {
+      console.warn('[Indexer] 旧索引の整理を次回に延期します', error);
+    }).finally(() => { this.legacyCleanup = null; });
+    return this.legacyCleanup;
   }
 
   dispose(): void {

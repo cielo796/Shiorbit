@@ -2,6 +2,7 @@ import type { VPath } from '../core/vault/types';
 import type { Backlink, OutLink } from '../core/index/Indexer';
 import { linkDisplay } from '../core/markdown/wikilink';
 import { el, noteLabel } from './dom';
+import { limitContext } from '../core/text/excerpt';
 
 export interface BacklinksPaneOptions {
   onOpen: (path: VPath, offset?: number) => void;
@@ -57,7 +58,7 @@ export class BacklinksPane {
       group.append(title);
 
       for (const b of list) {
-        const line = el('div', 'backlink-context', b.context || '(空行)');
+        const line = el('div', 'backlink-context', limitContext(b.context) || '(空行)');
         line.title = `${from} を開く`;
         line.addEventListener('click', () => this.opts.onOpen(from, b.ref.from));
         group.append(line);
