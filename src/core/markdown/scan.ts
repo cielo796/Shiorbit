@@ -3,6 +3,7 @@ import { basename } from '../vault/path';
 import { maskCode } from './code';
 import { parseFrontmatter } from './frontmatter';
 import { parseLinks, type LinkRef } from './wikilink';
+import { limitContext, MAX_CONTEXT_LENGTH } from '../text/excerpt';
 
 export interface Heading {
   level: number;
@@ -103,12 +104,15 @@ export function frontmatterTags(fm: Record<string, unknown>): string[] {
   return [...set];
 }
 
-/** リンクが現れる行を切り出す。バックリンクの文脈表示に使う。 */
+/** リンクが現れる行の短い抜粋。巨大な行でも本文全体を保持しない。 */
 export function extractContext(text: string, from: number, to: number): string {
   const start = text.lastIndexOf('\n', from - 1) + 1;
   const nlEnd = text.indexOf('\n', to);
   const end = nlEnd === -1 ? text.length : nlEnd;
-  return text.slice(start, end).trim();
+  const excerptStart = Math.max(start, from - Math.floor(MAX_CONTEXT_LENGTH / 2));
+  const excerptEnd = Math.min(end, excerptStart + MAX_CONTEXT_LENGTH);
+  const excerpt = text.slice(excerptStart, excerptEnd).trim();
+  return limitContext(`${excerptStart > start ? '…' : ''}${excerpt}${excerptEnd < end ? '…' : ''}`);
 }
 
 /** 表示用のタイトル。frontmatter.title > 最初の H1 > ファイル名 */
