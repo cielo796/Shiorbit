@@ -109,6 +109,8 @@ export interface ConfirmOptions {
   cancelLabel?: string;
   /** 取り消せない操作は赤で示す。 */
   danger?: boolean;
+  /** 誤操作を避けるため、最初にキャンセルへフォーカスする。 */
+  preferCancel?: boolean;
 }
 
 /** はい / いいえ を受け取る。 */
@@ -127,8 +129,9 @@ export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
       frame.body.append(el('p', 'dialog-message', line));
     }
 
+    const cancel = button(opts.cancelLabel ?? 'キャンセル', undefined, () => finish(false));
     const confirm = button(opts.confirmLabel ?? 'OK', opts.danger ? 'danger' : 'primary', () => finish(true));
-    frame.footer.append(button(opts.cancelLabel ?? 'キャンセル', undefined, () => finish(false)), confirm);
-    confirm.focus();
+    frame.footer.append(cancel, confirm);
+    (opts.preferCancel ? cancel : confirm).focus();
   });
 }

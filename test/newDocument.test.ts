@@ -40,6 +40,7 @@ describe('新規作成の入力検査', () => {
   it('ファイル名に使えない文字を拒む', () => {
     expect(invalidNameReason('a:b')).not.toBeNull();
     expect(invalidNameReason('a?b')).not.toBeNull();
+    expect(invalidNameReason('AI\\Ollama')).not.toBeNull();
     expect(invalidNameReason('AI/Ollama')).toBeNull();
   });
 

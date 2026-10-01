@@ -38,6 +38,7 @@ export class GraphView {
 
   private data: GraphData = emptyGraph();
   private session: LayoutSession | null = null;
+  private pendingLayout = false;
 
   private ids: string[] = [];
   private indexOf = new Map<string, number>();
@@ -84,8 +85,14 @@ export class GraphView {
   }
 
   setData(data: GraphData): void {
+    if (sameGraph(this.data, data)) {
+      this.schedule();
+      return;
+    }
     this.session?.stop();
+    this.session = null;
     this.data = data;
+    this.pendingLayout = data.nodes.length > 0;
 
     this.ids = data.nodes.map((n) => n.id);
     this.indexOf = new Map(this.ids.map((id, i) => [id, i]));
@@ -100,14 +107,14 @@ export class GraphView {
 
     this.resetView();
 
-    if (data.nodes.length === 0) {
-      this.session = null;
-      this.schedule();
-      return;
-    }
+    this.startPendingLayout();
+  }
 
+  private startPendingLayout(): void {
+    if (!this.pendingLayout || !this.isVisible()) return;
+    this.pendingLayout = false;
     const { width, height } = this.size();
-    const session = startLayout(data, width, height);
+    const session = startLayout(this.data, width, height);
     session.onIds((ids) => {
       this.ids = ids;
       this.indexOf = new Map(ids.map((id, i) => [id, i]));
@@ -126,12 +133,21 @@ export class GraphView {
   }
 
   resize(): void {
+    if (!this.isVisible()) {
+      this.session?.stop();
+      this.session = null;
+      this.pendingLayout = this.data.nodes.length > 0;
+      return;
+    }
     const { width, height } = this.size();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.canvas.width = Math.max(1, Math.round(width * dpr));
-    this.canvas.height = Math.max(1, Math.round(height * dpr));
+    const pixelsX = Math.max(1, Math.round(width * dpr));
+    const pixelsY = Math.max(1, Math.round(height * dpr));
+    if (this.canvas.width !== pixelsX) this.canvas.width = pixelsX;
+    if (this.canvas.height !== pixelsY) this.canvas.height = pixelsY;
     this.canvas.style.width = `${width}px`;
     this.canvas.style.height = `${height}px`;
+    this.startPendingLayout();
     this.schedule();
   }
 
@@ -159,8 +175,14 @@ export class GraphView {
     };
   }
 
+  private isVisible(): boolean {
+    if (!this.ctx) return false;
+    const rect = this.dom.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
   private schedule(): void {
-    if (this.frame !== null) return;
+    if (this.frame !== null || !this.isVisible()) return;
     const raf = typeof requestAnimationFrame === 'function'
       ? requestAnimationFrame
       : (cb: FrameRequestCallback): number => setTimeout(() => cb(0), 16) as unknown as number;
@@ -171,6 +193,7 @@ export class GraphView {
   }
 
   private draw(): void {
+    if (!this.isVisible()) return;
     const ctx = this.ctx;
     if (!ctx) return;
 
@@ -378,3 +401,13 @@ function readPalette(host: HTMLElement): Palette {
 }
 
 export { isUnresolvedId };
+
+/** 保存通知だけで同じグラフの Worker を起動し直さない。 */
+function sameGraph(a: GraphData, b: GraphData): boolean {
+  return a.nodes.length === b.nodes.length && a.links.length === b.links.length
+    && a.nodes.every((n, i) => {
+      const other = b.nodes[i]!;
+      return n.id === other.id && n.label === other.label && n.kind === other.kind && n.degree === other.degree;
+    })
+    && a.links.every((l, i) => l.source === b.links[i]!.source && l.target === b.links[i]!.target);
+}

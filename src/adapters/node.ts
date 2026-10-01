@@ -14,6 +14,8 @@ import { basename, dirname, normalize, segments } from '../core/vault/path';
 export interface DirEntry {
   name: string;
   isDirectory: boolean;
+  mtimeMs?: number;
+  size?: number;
 }
 
 export interface FsStat {
@@ -29,7 +31,9 @@ export interface FsBridge {
   readBytes: (absPath: string) => Promise<Uint8Array>;
   writeText: (absPath: string, text: string) => Promise<void>;
   writeBytes: (absPath: string, data: Uint8Array) => Promise<void>;
-  readDir: (absPath: string) => Promise<DirEntry[]>;
+  readDir: (absPath: string, withStat?: boolean) => Promise<DirEntry[]>;
+  /** デスクトップでは再帰列挙を1回のIPCで受け取る。pathは指定ディレクトリ相対。 */
+  listTree?: (absPath: string, withStat?: boolean) => Promise<Entry[]>;
   stat: (absPath: string) => Promise<FsStat>;
   mkdirp: (absPath: string) => Promise<void>;
   /** 再帰削除。存在しなければ何もしない。 */
@@ -95,12 +99,20 @@ class NodeAdapter implements VaultAdapter {
   }
 
   async list(dir: VPath, recursive: boolean, withStat = false): Promise<Entry[]> {
+    if (recursive && this.fs.listTree) {
+      try {
+        const prefix = normalize(dir);
+        return (await this.fs.listTree(this.abs(prefix), withStat)).map(entry => ({
+          ...entry, path: prefix ? `${prefix}/${entry.path}` : entry.path,
+        }));
+      } catch (error) { mapError(error, dir); }
+    }
     const out: Entry[] = [];
 
     const walk = async (prefix: VPath): Promise<void> => {
       let entries: DirEntry[];
       try {
-        entries = await this.fs.readDir(this.abs(prefix));
+        entries = await this.fs.readDir(this.abs(prefix), withStat);
       } catch (e) {
         if ((e as { code?: string } | null)?.code === 'ENOENT' && prefix !== normalize(dir)) return;
         mapError(e, prefix);
@@ -115,6 +127,10 @@ class NodeAdapter implements VaultAdapter {
         }
         if (!withStat) {
           out.push({ path, name: entry.name, kind: 'file' });
+          continue;
+        }
+        if (entry.mtimeMs !== undefined && entry.size !== undefined) {
+          out.push({ path, name: entry.name, kind: 'file', mtime: entry.mtimeMs, size: entry.size });
           continue;
         }
         try {

@@ -8,6 +8,13 @@ import {
 } from '../src/core/settings/workspaceLayout';
 
 describe('ワークスペース構成の保存', () => {
+  it('展開フォルダを保存・復元し、旧設定では全て閉じる', () => {
+    const stored = { ...EMPTY_LAYOUT, expandedFolders: ['料理', '学習/Next.js'] };
+    expect(parseLayout(serializeLayout(stored))).toEqual(stored);
+    expect(isEmptyLayout(stored)).toBe(false);
+    expect(normalizeLayout({ ...EMPTY_LAYOUT, expandedFolders: ['A', 'A', '', null, '../outside'] }).expandedFolders).toEqual(['A']);
+    expect(normalizeLayout(EMPTY_LAYOUT).expandedFolders ?? []).toEqual([]);
+  });
   const layout = {
     panes: [
       { tabs: ['a.md', 'b.md'], active: 'b.md' },

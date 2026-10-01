@@ -1,15 +1,17 @@
-import type { Unsubscribe, VPath } from '../vault/types';
+import type { Entry as VaultEntry, Unsubscribe, VPath } from '../vault/types';
 import type { VaultService } from '../vault/VaultService';
 import type { LinkRef } from '../markdown/wikilink';
 import type { NoteMeta } from '../markdown/scan';
-import { aliasesOf, displayTitle, extractContext } from '../markdown/scan';
-import { stripDocumentExtension } from '../vault/path';
+import { aliasesOf, displayTitle, extractContext, frontmatterTags } from '../markdown/scan';
+import { isSupportedDocument, stripDocumentExtension } from '../vault/path';
 import { scanDocument } from './scanDocument';
 import { emptyTables, resolveLink, type ResolveTables } from './resolver';
 import { SearchService, makeSnippet } from './SearchService';
+import { searchText } from './searchText';
 import { nullStore, type KeyValueStore } from '../storage/KeyValueStore';
 import { CACHE_VERSION, cacheKey, validateCache, type CachedIndex } from './IndexCache';
 import type { GraphInput } from '../graph/types';
+import { matchSnippet, type MatchText, type VaultMatches } from '../search/matches';
 
 export interface OutLink {
   ref: LinkRef;
@@ -60,6 +62,7 @@ export interface BuildReport {
 }
 
 export interface IndexerOptions {
+  autoCollectTags?: boolean;
   /** インデックスの保存先。省略すると毎回全件スキャンになる。 */
   cache?: KeyValueStore;
   /** 変更後にキャッシュを書き出すまでの待ち時間 */
@@ -89,7 +92,11 @@ export class Indexer {
   private readonly cache: KeyValueStore;
   private readonly persistDelayMs: number;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private cacheDirty = false;
+  private cacheRevision = 0;
+  private persisting: Promise<void> | null = null;
   private lastReport: BuildReport = { scanned: 0, reused: 0, ms: 0 };
+  private autoCollectTags: boolean;
 
   constructor(
     private readonly vault: VaultService,
@@ -97,6 +104,7 @@ export class Indexer {
   ) {
     this.cache = options.cache ?? nullStore;
     this.persistDelayMs = options.persistDelayMs ?? 2000;
+    this.autoCollectTags = options.autoCollectTags ?? true;
   }
 
   get report(): BuildReport {
@@ -111,9 +119,11 @@ export class Indexer {
    * キャッシュがあれば mtime を突き合わせ、変わったノートだけ読み直す (設計書 §5)。
    * キャッシュが無い・形式が古い・壊れている場合は黙って全件スキャンに落ちる。
    */
-  async rebuild(onProgress?: (done: number, total: number) => void, force = false): Promise<void> {
+  async rebuild(onProgress?: (done: number, total: number) => void, force = false, knownEntries?: readonly VaultEntry[]): Promise<void> {
     const started = Date.now();
-    const notes = await this.vault.listDocuments(true);
+    const notes = knownEntries
+      ? knownEntries.filter(e => e.kind === 'file' && isSupportedDocument(e.path))
+      : await this.vault.listDocuments(true);
     this.entries.clear();
 
     let toScan: VPath[] = [];
@@ -121,7 +131,9 @@ export class Indexer {
 
     const cached = force ? null : validateCache(await this.cache.get(cacheKey(this.vault.name)), this.vault.name);
 
-    if (cached && this.search.restore(cached.search)) {
+    let cacheReused = false;
+    if (cached && await this.search.restore(cached.search)) {
+      cacheReused = true;
       const previous = new Map(cached.entries.map((e) => [e.meta.path, e]));
       const alive = new Set<VPath>();
 
@@ -149,6 +161,7 @@ export class Indexer {
     }
 
     let done = reused;
+    let lastYield = Date.now();
     onProgress?.(done, notes.length);
     for (const path of toScan) {
       try {
@@ -157,19 +170,38 @@ export class Indexer {
         // 読めないファイルがあっても全体は止めない
       }
       onProgress?.(++done, notes.length);
+      if (Date.now() - lastYield >= 16) {
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        lastYield = Date.now();
+      }
     }
 
     this.lastReport = { scanned: toScan.length, reused, ms: Date.now() - started };
-    this.reindex();
+    this.reindex(!cacheReused || toScan.length > 0 || cached?.entries.length !== notes.length);
   }
 
   /** 1件だけ再スキャンする。保存直後や外部変更の通知で呼ぶ。 */
   async updateNote(path: VPath): Promise<void> {
-    try {
-      await this.load(path);
-    } catch {
+    await this.updateNotes([path]);
+  }
+
+  /** まとめて読み込み、全リンク再解決・画面通知は一度だけ行う。 */
+  async updateNotes(paths: readonly VPath[], removed: readonly VPath[] = []): Promise<void> {
+    for (const path of removed) {
       this.entries.delete(path);
       this.search.remove(path);
+    }
+    let lastYield = Date.now();
+    for (const path of new Set(paths)) {
+      try { await this.load(path); }
+      catch {
+        this.entries.delete(path);
+        this.search.remove(path);
+      }
+      if (Date.now() - lastYield >= 16) {
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        lastYield = Date.now();
+      }
     }
     this.reindex();
   }
@@ -202,7 +234,7 @@ export class Indexer {
    * ノートが1件増えるだけで、それまで未解決だったリンクが解決済みに変わるため、
    * 変更のたびに全リンクを引き直す (リンク1本あたり Map 参照1回なので十分速い)。
    */
-  private reindex(): void {
+  private reindex(persist = true): void {
     this.tables = emptyTables();
     for (const { meta } of this.entries.values()) {
       const pathKey = stripDocumentExtension(meta.path).toLowerCase();
@@ -239,7 +271,11 @@ export class Indexer {
     }
 
     for (const fn of [...this.listeners]) fn();
-    this.schedulePersist();
+    if (persist) {
+      this.cacheDirty = true;
+      this.cacheRevision++;
+      this.schedulePersist();
+    }
   }
 
   // ------------------------------------------------------ キャッシュ保存
@@ -247,7 +283,10 @@ export class Indexer {
   private schedulePersist(): void {
     if (this.cache === nullStore) return;
     if (this.persistTimer !== null) clearTimeout(this.persistTimer);
-    this.persistTimer = setTimeout(() => void this.persist(), this.persistDelayMs);
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      void this.persist();
+    }, this.persistDelayMs);
   }
 
   /** いますぐ書き出す。ページを閉じる直前などに呼ぶ。 */
@@ -259,8 +298,14 @@ export class Indexer {
     await this.persist();
   }
 
-  private async persist(): Promise<void> {
-    if (this.cache === nullStore) return;
+  private persist(): Promise<void> {
+    if (this.persisting) return this.persisting.then(() => this.cacheDirty ? this.persist() : undefined);
+    if (!this.cacheDirty || this.cache === nullStore) return Promise.resolve();
+    this.persisting = this.persistOnce(this.cacheRevision).finally(() => { this.persisting = null; });
+    return this.persisting;
+  }
+
+  private async persistOnce(revision: number): Promise<void> {
     const payload: CachedIndex = {
       version: CACHE_VERSION,
       vault: this.vault.name,
@@ -272,6 +317,7 @@ export class Indexer {
     };
     try {
       await this.cache.set(cacheKey(this.vault.name), payload);
+      if (revision === this.cacheRevision) this.cacheDirty = false;
     } catch (e) {
       console.warn('[Indexer] キャッシュの保存に失敗しました', e);
     }
@@ -293,7 +339,19 @@ export class Indexer {
   }
 
   getMeta(path: VPath): NoteMeta | undefined {
-    return this.entries.get(path)?.meta;
+    const meta = this.entries.get(path)?.meta;
+    return meta ? this.effectiveMeta(meta) : undefined;
+  }
+
+  /** 生の解析結果は保持し、設定のプレビュー／取消でも再読込や本文変更をしない。 */
+  setAutoCollectTags(enabled: boolean): void {
+    if (this.autoCollectTags === enabled) return;
+    this.autoCollectTags = enabled;
+    for (const fn of [...this.listeners]) fn();
+  }
+
+  private effectiveMeta(meta: NoteMeta): NoteMeta {
+    return this.autoCollectTags ? meta : { ...meta, tags: frontmatterTags(meta.frontmatter) };
   }
 
   has(path: VPath): boolean {
@@ -302,7 +360,7 @@ export class Indexer {
 
   /** 索引にあるすべてのノートのメタ情報。Bases の問い合わせに使う。 */
   allMeta(): NoteMeta[] {
-    return [...this.entries.values()].map(({ meta }) => meta);
+    return [...this.entries.values()].map(({ meta }) => this.effectiveMeta(meta));
   }
 
   /** 索引にあるノートのパス。まとめて外すときに使う。 */
@@ -353,7 +411,7 @@ export class Indexer {
   tags(): Map<string, VPath[]> {
     const map = new Map<string, VPath[]>();
     for (const { meta } of this.entries.values()) {
-      for (const tag of meta.tags) push(map, tag, meta.path);
+      for (const tag of this.effectiveMeta(meta).tags) push(map, tag, meta.path);
     }
     return map;
   }
@@ -375,7 +433,7 @@ export class Indexer {
    * 実際に画面へ出た行だけ `snippetFor` で取りに行く形にした（ROADMAP 7.5）。
    */
   async searchNotes(query: string, limit = 50): Promise<SearchResult[]> {
-    return this.search.search(query, limit).flatMap((hit) => {
+    return this.search.search(query, limit, this.autoCollectTags).flatMap((hit) => {
       const meta = this.entries.get(hit.path)?.meta;
       return meta ? [{ path: hit.path, title: displayTitle(meta), score: hit.score, snippet: '' }] : [];
     });
@@ -384,10 +442,43 @@ export class Indexer {
   /** 検索結果の抜粋。読めなければ空文字（表示は落とさない）。 */
   async snippetFor(path: VPath, query: string): Promise<string> {
     try {
-      return makeSnippet((await this.vault.readNote(path)).text, query);
+      return makeSnippet(searchText(path, (await this.vault.readNote(path)).text), query);
     } catch {
       return '';
     }
+  }
+
+  /**
+   * サイドバーと同じ検索索引で候補を並べ、エディタと同じ照合器で位置・件数を確定する。
+   * 正規表現・語の途中・記号は単語索引だけでは拾えないため残りの文書も調べる。
+   * 本文は保持せず、表示する抜粋だけ返す。古い入力はファイルの読み込み間で中断する。
+   */
+  async searchMatches(
+    query: string,
+    match: MatchText,
+    options: { cancelled: () => boolean; drafts?: ReadonlyMap<VPath, string> },
+  ): Promise<VaultMatches> {
+    const ranked = this.search.search(query, this.entries.size, this.autoCollectTags).map((hit) => hit.path);
+    const paths = new Set([...ranked, ...this.entries.keys(), ...(options.drafts?.keys() ?? [])]);
+    const result: VaultMatches = { documents: [], total: 0, skipped: 0 };
+    for (const path of paths) {
+      if (options.cancelled()) break;
+      try {
+        // CodeMirrorは改行をLFへ正規化する。位置と抜粋も同じ座標系に揃える。
+        const text = (options.drafts?.get(path) ?? (await this.vault.readNote(path)).text).replace(/\r\n?/g, '\n');
+        if (options.cancelled()) break;
+        const matches = match(text);
+        if (!matches.length) continue;
+        result.total += matches.length;
+        result.documents.push({
+          path, title: this.getMeta(path) ? displayTitle(this.getMeta(path)!) : path,
+          count: matches.length,
+          ranges: matches,
+          matches: matches.slice(0, 100).map((hit) => matchSnippet(text, hit)),
+        });
+      } catch { result.skipped++; }
+    }
+    return result;
   }
 }
 

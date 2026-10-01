@@ -27,6 +27,8 @@ export interface DocumentContext {
   headingsOf: (path: VPath) => Heading[];
   /** Bases が引く、索引に載っているノート全部。 */
   allMeta: () => Parameters<BasesView['setBase']>[1];
+  /** HTML プレビュー等が Vault 内の添付を読む。 */
+  readBinary: (path: VPath) => Promise<ArrayBuffer>;
   /** 中身が変わった。保存は DocumentArea が受け持つ。 */
   markDirty: () => void;
 }
@@ -78,6 +80,6 @@ export interface DocumentView {
   activeMode?(): string;
   setMode?(id: string): void;
 
-  /** スマホの Markdown ツールバーを出すか。 */
-  readonly usesMarkdownToolbar?: boolean;
+  /** スマホ用記号ツールバー。未指定なら表示しない。 */
+  readonly mobileToolbarLanguage?: 'markdown' | 'html';
 }

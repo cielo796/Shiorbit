@@ -37,6 +37,8 @@ export interface VaultServiceOptions {
 }
 
 export interface WatchOptions {
+  /** 起動時に取得済みの一覧。初回の監視用走査を省く。 */
+  initialEntries?: readonly Entry[];
   /** caps.watch が false のときのポーリング間隔 (ms) */
   intervalMs?: number;
 }
@@ -50,9 +52,15 @@ export interface WatchOptions {
 export class VaultService {
   private readonly listeners = new Set<(ev: VaultEvent) => void>();
   private stopFn: Unsubscribe | null = null;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private watching = false;
+  private watchingPaused = false;
+  private watchGeneration = 0;
+  private watchInterval = 5000;
   /** ポーリング比較用スナップショット path -> mtime */
   private snapshot = new Map<VPath, number>();
+  private polling: Promise<FileEvent[]> | null = null;
+  private baseline: Promise<void> | null = null;
 
   constructor(
     private readonly adapter: VaultAdapter,
@@ -169,6 +177,17 @@ export class VaultService {
       throw new ConflictError(path, 0, Date.now());
     }
     await this.adapter.write(path, text);
+    this.emit({ type: 'create', path });
+  }
+
+  /** 画像などのバイナリを、既存ファイルを上書きせずVaultへ追加する。 */
+  async createBinary(path: VPath, data: ArrayBuffer): Promise<void> {
+    if (await this.adapter.exists(path)) {
+      throw new ConflictError(path, 0, Date.now());
+    }
+    await this.adapter.writeBinary(path, data);
+    const after = await this.safeStat(path);
+    this.snapshot.set(path, after?.mtime ?? Date.now());
     this.emit({ type: 'create', path });
   }
 
@@ -306,31 +325,62 @@ export class VaultService {
       return;
     }
 
-    const interval = opts.intervalMs ?? 5000;
-    void this.captureSnapshot();
-    this.timer = setInterval(() => {
-      void this.poll();
-    }, interval);
+    this.watchInterval = Math.max(1, opts.intervalMs ?? 5000);
+    this.watching = true;
+    const generation = this.watchGeneration;
+    this.baseline = this.captureSnapshot(opts.initialEntries);
+    void this.baseline.then(() => this.schedulePoll(generation));
   }
 
   stopWatching(): void {
+    this.watchGeneration++;
+    this.watching = false;
     this.stopFn?.();
     this.stopFn = null;
     if (this.timer !== null) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
   }
 
+  /** バックグラウンドでは走査を止める。比較用の一覧は保持して復帰時の変更を検出する。 */
+  setWatchingPaused(paused: boolean): void {
+    if (this.watchingPaused === paused) return;
+    this.watchingPaused = paused;
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+    if (!paused) this.schedulePoll(this.watchGeneration);
+  }
+
+  private schedulePoll(generation: number): void {
+    if (!this.watching || this.watchingPaused || generation !== this.watchGeneration || this.timer !== null) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      // 遅い SAF 走査の終了から次の間隔を数える。固定周期で連続走査しない。
+      void this.poll().finally(() => this.schedulePoll(generation));
+    }, this.watchInterval);
+  }
+
   /** フォーカス復帰時などに明示的に1回だけ差分を取る */
-  async poll(): Promise<FileEvent[]> {
+  poll(): Promise<FileEvent[]> {
+    // フォーカス復帰とタイマーが重なっても、走査とイベント通知は一度だけ。
+    if (this.polling) return this.polling;
+    this.polling = this.pollOnce().finally(() => { this.polling = null; });
+    return this.polling;
+  }
+
+  private async pollOnce(): Promise<FileEvent[]> {
+    const generation = this.watchGeneration;
+    await this.baseline;
+    if (generation !== this.watchGeneration) return [];
     let mtimes: Map<VPath, number>;
     try {
       mtimes = await this.readMtimes();
     } catch (error) {
-      this.emit({ type: 'error', error });
+      if (generation === this.watchGeneration) this.emit({ type: 'error', error });
       return [];
     }
+    if (generation !== this.watchGeneration) return [];
 
     const events: FileEvent[] = [];
     for (const [path, mtime] of mtimes) {
@@ -354,10 +404,10 @@ export class VaultService {
    * File System Access API や SAF ではファイル1件ごとの往復が高くつき、
    * 1万ノートなら5秒ごとに1万回になってしまうため（ROADMAP 7.3）。
    */
-  private async readMtimes(): Promise<Map<VPath, number>> {
+  private async readMtimes(entries?: readonly Entry[]): Promise<Map<VPath, number>> {
     const out = new Map<VPath, number>();
 
-    for (const entry of await this.listAll(true)) {
+    for (const entry of entries ?? await this.listAll(true)) {
       if (entry.kind !== 'file') continue;
       if (entry.mtime !== undefined) {
         out.set(entry.path, entry.mtime);
@@ -371,10 +421,13 @@ export class VaultService {
     return out;
   }
 
-  private async captureSnapshot(): Promise<void> {
+  private async captureSnapshot(entries?: readonly Entry[]): Promise<void> {
+    const generation = this.watchGeneration;
     try {
-      this.snapshot = await this.readMtimes();
+      const snapshot = await this.readMtimes(entries);
+      if (generation === this.watchGeneration) this.snapshot = snapshot;
     } catch (error) {
+      if (generation !== this.watchGeneration) return;
       this.snapshot.clear();
       this.emit({ type: 'error', error });
     }
@@ -396,7 +449,8 @@ export class VaultService {
 }
 
 /** ディレクトリを先に、次に名前順 (数字は自然順) */
+const entryCollator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
 function compareEntries(a: Entry, b: Entry): number {
   if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
-  return a.path.localeCompare(b.path, 'ja', { numeric: true, sensitivity: 'base' });
+  return entryCollator.compare(a.path, b.path);
 }

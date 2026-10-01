@@ -61,6 +61,7 @@ export class DocumentArea {
       settings: opts.settings,
       headingsOf: (path) => opts.index()?.getMeta(path)?.headings ?? [],
       allMeta: () => opts.index()?.allMeta() ?? [],
+      readBinary: (path) => opts.vault.readBinary(path),
       markDirty: () => this.markDirty(),
     };
 
@@ -87,8 +88,13 @@ export class DocumentArea {
     return this.dirty;
   }
 
-  get usesMarkdownToolbar(): boolean {
-    return this.view?.usesMarkdownToolbar ?? false;
+  /** プレビュー中の HTML は、未初期化の共用エディタではなく文書から読む。 */
+  get documentText(): string | null {
+    return this.view?.contentToSave() ?? null;
+  }
+
+  get mobileToolbarLanguage(): 'markdown' | 'html' | null {
+    return this.view?.mobileToolbarLanguage ?? null;
   }
 
   headings(): Heading[] {
@@ -286,6 +292,9 @@ export class DocumentArea {
   private showOnly(view: DocumentView | null): void {
     const shown = view?.element() ?? null;
     const surfaces = this.opts.surfaces;
+    if (shown !== surfaces.preview && (surfaces.preview.hasAttribute('src') || surfaces.preview.srcdoc !== '')) {
+      clearHtmlPreview(surfaces.preview);
+    }
     for (const element of [surfaces.editor.dom, surfaces.preview, surfaces.bases.dom, surfaces.canvas.dom]) {
       element.style.display = element === shown ? '' : 'none';
     }

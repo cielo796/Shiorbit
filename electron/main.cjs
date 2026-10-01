@@ -8,6 +8,7 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { listTree } = require('./listTree.cjs');
 
 const DEV_URL = process.env['SHIORBIT_DEV_URL'] ?? '';
 const isDev = DEV_URL !== '';
@@ -150,6 +151,7 @@ function fsHandle(channel, run) {
 }
 
 fsHandle('fs:readText', (p) => fs.readFile(safePath(p), 'utf8'));
+fsHandle('fs:listTree', (p, withStat = false) => listTree(safePath(p), withStat));
 
 fsHandle('fs:readBytes', async (p) => new Uint8Array(await fs.readFile(safePath(p))));
 
@@ -157,9 +159,22 @@ fsHandle('fs:writeText', (p, text) => fs.writeFile(safePath(p), text, 'utf8'));
 
 fsHandle('fs:writeBytes', (p, data) => fs.writeFile(safePath(p), Buffer.from(data)));
 
-fsHandle('fs:readDir', async (p) => {
-  const entries = await fs.readdir(safePath(p), { withFileTypes: true });
-  return entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory() }));
+fsHandle('fs:readDir', async (p, withStat = false) => {
+  const dir = safePath(p);
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const result = entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory() }));
+  // ファイルごとのIPC往復を廃止。I/Oも16件ずつに制限してイベントループを塞がない。
+  if (withStat) for (let at = 0; at < result.length; at += 16) {
+    await Promise.all(result.slice(at, at + 16).map(async (entry) => {
+      if (entry.isDirectory) return;
+      try {
+        const stat = await fs.stat(safePath(path.join(dir, entry.name)));
+        entry.mtimeMs = stat.mtimeMs;
+        entry.size = stat.size;
+      } catch { /* 列挙後に消えたファイル等は従来の個別確認に任せる。 */ }
+    }));
+  }
+  return result;
 });
 
 fsHandle('fs:stat', async (p) => {

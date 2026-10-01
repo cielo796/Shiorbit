@@ -104,6 +104,21 @@ describe('ObjectURL の管理', () => {
     stub.restore();
   });
 
+  it('同じ画像を同時に要求しても読み込みとObject URL作成は1回だけ', async () => {
+    const stub = stubObjectUrl();
+    const load = vi.fn(async () => {
+      await Promise.resolve();
+      return new ArrayBuffer(4);
+    });
+    const cache = new AttachmentUrlCache(load);
+
+    const [first, second] = await Promise.all([cache.get('img/a.png'), cache.get('img/a.png')]);
+    expect(first).toBe(second);
+    expect(load).toHaveBeenCalledOnce();
+    expect(stub.created).toHaveLength(1);
+    stub.restore();
+  });
+
   it('上限を超えたら古いものから解放する', async () => {
     const stub = stubObjectUrl();
     const cache = new AttachmentUrlCache(() => Promise.resolve(new ArrayBuffer(4)), 2);

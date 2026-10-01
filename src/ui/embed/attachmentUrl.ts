@@ -29,6 +29,8 @@ export function mimeOf(path: string): string | null {
  */
 export class AttachmentUrlCache {
   private readonly urls = new Map<string, string>();
+  private readonly pending = new Map<string, Promise<string | null>>();
+  private generation = 0;
 
   constructor(
     private readonly load: (path: string) => Promise<ArrayBuffer>,
@@ -52,9 +54,24 @@ export class AttachmentUrlCache {
       return cached;
     }
 
+    const inFlight = this.pending.get(path);
+    if (inFlight !== undefined) return inFlight;
+
+    const generation = this.generation;
+    const request = this.loadUrl(path, mime, generation);
+    this.pending.set(path, request);
+    void request.finally(() => {
+      if (this.pending.get(path) === request) this.pending.delete(path);
+    });
+    return request;
+  }
+
+  private async loadUrl(path: string, mime: string, generation: number): Promise<string | null> {
     let url: string;
     try {
-      url = URL.createObjectURL(new Blob([await this.load(path)], { type: mime }));
+      const data = await this.load(path);
+      if (generation !== this.generation) return null;
+      url = URL.createObjectURL(new Blob([data], { type: mime }));
     } catch {
       return null;
     }
@@ -73,8 +90,10 @@ export class AttachmentUrlCache {
 
   /** Vault を閉じるときは必ず呼ぶ。残すと解放されない。 */
   clear(): void {
+    this.generation++;
     for (const url of this.urls.values()) URL.revokeObjectURL(url);
     this.urls.clear();
+    this.pending.clear();
   }
 
   private evict(): void {

@@ -8,7 +8,7 @@ import type { DocumentContext, DocumentMode, DocumentView, DocumentViewState } f
  * 面（CodeMirror）は DocumentArea から借りるだけで、View は状態を持たない。
  */
 export class MarkdownDocumentView implements DocumentView {
-  readonly usesMarkdownToolbar: boolean = true;
+  readonly mobileToolbarLanguage: 'markdown' | 'html' = 'markdown';
   readonly modes?: readonly DocumentMode[];
 
   constructor(

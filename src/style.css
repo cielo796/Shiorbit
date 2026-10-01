@@ -48,8 +48,18 @@ button {
 }
 button:hover { background: var(--bg-hover); }
 button:active { transform: translateY(1px); }
+button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  transform: none;
+}
+button:disabled:hover { background: var(--bg-elev); }
 button.primary { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
 button.primary:hover { background: var(--accent); }
+button.primary:disabled, button.primary:disabled:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
+}
 button.ghost { background: transparent; border-color: transparent; color: var(--fg-dim); padding: 4px 8px; }
 button.ghost:hover { background: var(--bg-hover); color: var(--fg); }
 button.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
@@ -79,6 +89,7 @@ button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transpar
 /* -------------------------------------------------------------- workspace */
 
 .workspace {
+  --sidebar-w: min(var(--sidebar-preferred-w, 260px), 50vw);
   height: 100%;
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr var(--rightbar-w);
@@ -96,6 +107,7 @@ button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transpar
 }
 
 .sidebar {
+  position: relative;
   grid-area: side;
   background: var(--bg-side);
   border-right: 1px solid var(--border);
@@ -112,6 +124,24 @@ button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transpar
  * それぞれのメディアクエリで打ち消す（下のほうにある）。
  */
 .workspace.sidebar-hidden { --sidebar-w: 0px; }
+.sidebar-resize-handle {
+  position: absolute; right: -4px; top: 0; bottom: 0; width: 8px;
+  cursor: col-resize; touch-action: none; z-index: 5;
+}
+.sidebar-resize-handle:hover, .sidebar-resize-handle:focus-visible,
+.resizing-sidebar .sidebar-resize-handle {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  outline: none;
+}
+.sidebar-resize-guide:not([hidden]) {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--accent); z-index: 6; pointer-events: none; will-change: transform;
+}
+.resizing-sidebar { user-select: none; }
+.resizing-sidebar iframe { pointer-events: none; }
+@media (max-width: 767px) {
+  .sidebar-resize-handle { display: none; }
+}
 .workspace.sidebar-hidden > .sidebar { display: none; }
 .workspace.rightbar-hidden { --rightbar-w: 0px; }
 .workspace.rightbar-hidden > .rightbar { display: none; }
@@ -220,7 +250,8 @@ button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transpar
 .tree li { position: relative; }
 .tree .row {
   display: flex; align-items: center; gap: 4px;
-  padding: 3px 8px 3px 6px;
+  min-height: 28px;
+  padding: 0 8px 0 2px;
   border-radius: 5px;
   cursor: pointer;
   white-space: nowrap; overflow: hidden;
@@ -229,8 +260,19 @@ button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transpar
 }
 .tree .row:hover { background: var(--bg-hover); color: var(--fg); }
 .tree .row.active { background: var(--bg-active); color: var(--fg); }
+.tree .row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .tree .row .label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-.tree .row .caret { width: 12px; flex: none; color: var(--fg-faint); font-size: calc(var(--ui-font-size) * 0.7143); }
+.tree .row .caret {
+  width: 28px; height: 28px; flex: none;
+  display: inline-grid; place-items: center;
+  padding: 0; border: 0; border-radius: 5px;
+  background: transparent; color: var(--fg-faint);
+  font: inherit; font-size: calc(var(--ui-font-size) * 0.7143);
+}
+.tree .row button.caret { cursor: pointer; }
+.tree .row button.caret:hover { background: var(--bg-hover); color: var(--fg); }
+.tree .row button.caret:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+.tree .row .caret-spacer { pointer-events: none; }
 .tree .row .icon { width: 14px; flex: none; text-align: center; opacity: .7; font-size: calc(var(--ui-font-size) * 0.8571); }
 .tree .row .row-action { opacity: 0; flex: none; font-size: calc(var(--ui-font-size) * 0.7857); padding: 0 4px; }
 .tree .row:hover .row-action, .tree .row .row-action:focus-visible { opacity: .6; }
@@ -488,6 +530,12 @@ mark { background: rgba(167, 139, 250, .3); color: inherit; border-radius: 2px; 
 
 /* ---------------------------------------------------------------- タグ */
 
+.tag-pane-toolbar { padding: 10px; border-bottom: 1px solid var(--border); }
+.tag-pane-toolbar .dialog-hint { overflow-wrap: anywhere; margin-top: 6px; }
+.tag-editor-list { display: flex; flex-direction: column; gap: 6px; }
+.tag-editor-row { display: flex; gap: 8px; align-items: center; }
+.tag-editor-row input { flex: 1; min-width: 0; }
+.tag-editor-row button { flex-shrink: 0; }
 .tag-row {
   display: flex; align-items: center; gap: 8px;
   padding: 5px 12px; cursor: pointer; font-size: calc(var(--ui-font-size) * 0.8929); color: var(--fg-dim);
@@ -569,22 +617,45 @@ mark { background: rgba(167, 139, 250, .3); color: inherit; border-radius: 2px; 
   scrollbar-width: none;
 }
 .tab-strip::-webkit-scrollbar { display: none; }
+.file-drop-active {
+  outline: 2px solid var(--accent); outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg)) !important;
+  box-shadow: inset 4px 0 0 var(--accent), 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.tree .row.paste-target {
+  outline: 1px solid var(--accent); outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg)) !important;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.file-move-active {
+  outline: 2px solid var(--accent); outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 28%, var(--bg)) !important;
+  box-shadow: inset 4px 0 0 var(--accent), 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.file-move-source { opacity: .55; }
+.import-issues { max-height: 45vh; overflow-y: auto; overflow-wrap: anywhere; padding-left: 20px; }
+.import-issues li { margin-bottom: 8px; }
 .tab-item {
   display: flex; align-items: center; gap: 4px; flex: none;
-  max-width: 180px; padding: 5px 6px 5px 10px; cursor: pointer;
+  max-width: 180px; padding: 1px 4px 1px 10px; cursor: pointer;
   font-size: calc(var(--ui-font-size) * 0.8571); color: var(--fg-faint);
   border-bottom: 2px solid transparent;
 }
 .tab-item:hover { background: var(--bg-hover); color: var(--fg-dim); }
 .tab-item.active { color: var(--fg); background: var(--bg); border-bottom-color: var(--accent); }
-.tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-item.dirty .tab-label::after { content: ' ●'; color: var(--accent); font-size: .8em; }
 .tab-close {
-  flex: none; background: none; border: none; padding: 0 2px; cursor: pointer;
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; background: none; border: none; border-radius: 4px;
+  padding: 0; cursor: pointer;
   color: var(--fg-faint); font-size: calc(var(--ui-font-size) * 0.7143); opacity: 0;
 }
 .tab-item:hover .tab-close, .tab-item.active .tab-close { opacity: .7; }
-.tab-close:hover { opacity: 1; color: var(--fg); }
+.tab-item .tab-close:hover, .tab-item .tab-close:focus-visible {
+  opacity: 1; color: var(--fg); background: var(--bg-hover);
+}
+.tab-close:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 @media (max-width: 767px) {
   /* 狭い画面ではタブも分割も出さない（設計書 §8 のモバイル像を保つ）。 */
@@ -594,19 +665,39 @@ mark { background: rgba(167, 139, 250, .3); color: inherit; border-radius: 2px; 
 
 /* ------------------------------------------------------- 右クリックメニュー */
 
+.context-menu-layer {
+  position: fixed; z-index: 200; inset: 0 auto auto 0;
+  width: 0; height: 0; pointer-events: none;
+}
 .context-menu {
-  position: fixed; z-index: 200;
-  min-width: 190px; padding: 4px;
+  position: fixed; z-index: 200; pointer-events: auto;
+  min-width: 220px; max-height: calc(100vh - 8px); overflow-y: auto; padding: 4px;
   display: flex; flex-direction: column;
   background: var(--bg-elev); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 12px 30px rgba(0, 0, 0, .45);
 }
+.context-menu-section {
+  margin: 4px 6px 2px; padding: 5px 4px 3px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-faint); font-size: calc(var(--ui-font-size) * 0.7143);
+  font-weight: 600; letter-spacing: .04em;
+}
+.context-menu-section:first-child { margin-top: 0; border-top: 0; }
 .context-menu-item {
   text-align: left; background: none; border: none; border-radius: 5px;
   padding: 6px 10px; cursor: pointer; color: var(--fg);
   font: inherit; font-size: calc(var(--ui-font-size) * 0.8571);
 }
+.context-menu-item.has-submenu {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+}
+.context-menu-item.has-submenu::after {
+  content: '\203a'; color: var(--fg-faint); font-size: 1.25em; line-height: 1;
+}
+.context-submenu { z-index: 201; }
 .context-menu-item:hover:not(:disabled) { background: var(--bg-hover); }
+.context-menu-item:focus-visible { background: var(--bg-hover); outline: 1px solid var(--accent); outline-offset: -1px; }
+.context-menu-item.danger:not(:disabled) { color: var(--danger); }
 .context-menu-item:disabled { color: var(--fg-faint); cursor: default; }
 
 /* ----------------------------------------------------------------- ごみ箱 */

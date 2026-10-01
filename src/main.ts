@@ -14,6 +14,7 @@ import { createDemoAdapter } from './adapters/memory';
 import { describeUnsupported, detectPlatform } from './adapters/detect';
 import { forgetVault, hasSavedVault, pickVault, restoreVault } from './adapters/fsa';
 import { createKeyValueStore } from './adapters/idbKv';
+import { captureDroppedMarkdown } from './adapters/droppedMarkdown';
 import { openNativeCache, openNativeVault } from './adapters/nativeVault';
 import { forgetElectronVault, pickElectronVault, restoreElectronVault } from './adapters/electron';
 import {
@@ -54,7 +55,7 @@ async function boot(): Promise<void> {
       demo: () => createDemoAdapter(),
     };
 
-    void new App(root, source, cache ? { cache } : {}).start();
+    void new App(root, source, { ...(cache ? { cache } : {}), captureDroppedMarkdown }).start();
     return;
   }
 
@@ -71,7 +72,7 @@ async function boot(): Promise<void> {
       demo: () => createDemoAdapter(),
     };
 
-    void new App(root, source, cache ? { cache } : {}).start();
+    void new App(root, source, { ...(cache ? { cache } : {}), captureDroppedMarkdown }).start();
     return;
   }
 
@@ -87,7 +88,7 @@ async function boot(): Promise<void> {
         hasSaved: async () => false,
         demo: () => createDemoAdapter(),
       };
-      void new App(root, source, { cache: native.cache }).start();
+      void new App(root, source, { cache: native.cache, captureDroppedMarkdown }).start();
       return;
     }
   }
@@ -104,7 +105,7 @@ async function boot(): Promise<void> {
   };
 
   const cache = createKeyValueStore();
-  const deps: AppDeps = cache ? { cache } : {};
+  const deps: AppDeps = { ...(cache ? { cache } : {}), captureDroppedMarkdown };
   void new App(root, source, deps).start();
 }
 

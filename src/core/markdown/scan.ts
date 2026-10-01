@@ -84,6 +84,13 @@ function collectTags(body: string, fm: Record<string, unknown>): string[] {
     if (!/^\d+$/.test(tag)) set.add(tag);
   }
 
+  for (const tag of frontmatterTags(fm)) set.add(tag);
+  return [...set];
+}
+
+/** 手動指定のタグ。自動収集の設定にかかわらず有効にする。 */
+export function frontmatterTags(fm: Record<string, unknown>): string[] {
+  const set = new Set<string>();
   for (const key of ['tags', 'tag']) {
     const value = fm[key];
     if (typeof value === 'string') {

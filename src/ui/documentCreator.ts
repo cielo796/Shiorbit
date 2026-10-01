@@ -1,9 +1,10 @@
 import type { Indexer } from '../core/index/Indexer';
 import { dailyPath } from '../core/notes/date';
-import { newDocumentBody } from '../core/notes/newDocument';
+import { newDocumentBody, resolveNewDocument } from '../core/notes/newDocument';
+import type { NewDocumentKind } from '../core/notes/newDocument';
 import { applyTemplate } from '../core/notes/template';
 import type { SettingsData } from '../core/settings/Settings';
-import { basename, dirname, normalize } from '../core/vault/path';
+import { basename, dirname } from '../core/vault/path';
 import type { VaultService } from '../core/vault/VaultService';
 import type { VPath } from '../core/vault/types';
 import { ModalList } from './modalList';
@@ -19,6 +20,7 @@ export interface DocumentCreatorOptions {
   currentPath: () => VPath | null;
   refreshTree: () => Promise<void>;
   open: (path: VPath) => Promise<void>;
+  onCreated?: (path: VPath) => void;
   toast: (message: string, isError?: boolean) => void;
 }
 
@@ -40,20 +42,22 @@ export class DocumentCreator {
     const vault = this.opts.vault();
     if (!vault) return;
 
-    const trimmed = name.trim().replace(/\.md$/i, '');
+    const trimmed = name.trim();
     if (trimmed === '') return;
 
     const current = this.opts.currentPath();
     const dir = current ? dirname(current) : '';
-    const base = trimmed.includes('/') || dir === '' ? trimmed : `${dir}/${trimmed}`;
-    const path = `${normalize(base)}.md`;
+    const requested = trimmed.includes('/') || dir === '' ? trimmed : `${dir}/${trimmed}`;
+    const plan = resolveNewDocument(requested, 'markdown');
+    if (plan === null || (plan.kind !== 'markdown' && plan.kind !== 'html')) return;
+    const path = plan.path;
 
     try {
       if (await vault.exists(path)) {
         await this.opts.open(path);
         return;
       }
-      await vault.createNote(path, body ?? `# ${basename(path, true)}\n\n`);
+      await vault.createNote(path, body ?? newDocumentBody(plan.kind, basename(path, true)));
       await this.publish(path);
       this.opts.toast(`${path} を作成しました。`);
     } catch (e) {
@@ -62,13 +66,13 @@ export class DocumentCreator {
   }
 
   /** 種別（Markdown / HTML / Base / Canvas / フォルダ）を選んで作る。 */
-  async fromDialog(baseDir?: VPath): Promise<void> {
+  async fromDialog(baseDir?: VPath, defaultKind?: NewDocumentKind): Promise<void> {
     const vault = this.opts.vault();
     if (!vault) return;
 
     const current = this.opts.currentPath();
     const dir = baseDir ?? (current ? dirname(current) : '');
-    const plan = await askNewDocument({ baseDir: dir });
+    const plan = await askNewDocument({ baseDir: dir, defaultKind });
     if (plan === null) return;
 
     try {
@@ -173,6 +177,7 @@ export class DocumentCreator {
     await this.opts.refreshTree();
     await this.opts.index()?.updateNote(path);
     await this.opts.open(path);
+    this.opts.onCreated?.(path);
   }
 }
 

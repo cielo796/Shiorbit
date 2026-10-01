@@ -3,6 +3,7 @@ dist/
 .DS_Store
 *.local
 .vite/
+.codex-tmp/
 release/
 build/*
 !build/icon-source.png

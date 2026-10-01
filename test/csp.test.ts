@@ -35,6 +35,9 @@ describe('Content-Security-Policy', () => {
     expect(directive('img-src')).toContain('https:');
     // HTML プレビューは data: URL の sandbox iframe。
     expect(directive('frame-src')).toContain('data:');
+    expect(directive('frame-src')).toContain('blob:');
+    expect(directive('frame-src')).not.toContain('https:');
+    expect(directive('frame-src')).not.toContain('*');
     // グラフの力学計算は Worker。
     expect(directive('worker-src')).toContain("'self'");
     // CodeMirror は <style> を差し込む。

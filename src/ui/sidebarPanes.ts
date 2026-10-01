@@ -1,4 +1,5 @@
 import type { Indexer } from '../core/index/Indexer';
+import type { NewDocumentKind } from '../core/notes/newDocument';
 import type { TrashEntry } from '../core/vault/trash';
 import type { Entry, VPath } from '../core/vault/types';
 import { isOpenable } from '../core/vault/path';
@@ -8,13 +9,18 @@ import { SearchPane } from './searchPane';
 import { TagPane } from './tagPane';
 import { UnresolvedPane } from './unresolvedPane';
 import type { WorkspaceTab } from './workspaceChrome';
+import type { FileDropHandler, FileMoveHandler } from './fileDrop';
 
 export interface SidebarPanesOptions {
   index: () => Indexer | null;
   open: (path: VPath, offset?: number) => void;
   create: (name: string) => void;
-  createIn: (dir: VPath) => void;
+  createIn: (dir: VPath, kind?: NewDocumentKind) => void;
+  dropFiles?: FileDropHandler;
+  moveFile?: FileMoveHandler;
+  onFolderStateChanged?: () => void;
   rename: (path: VPath) => void;
+  editTags?: () => void;
   moveToTrash: (path: VPath) => void;
   restore: (entry: TrashEntry) => void;
   purge: (entry?: TrashEntry) => void;
@@ -39,14 +45,17 @@ export class SidebarPanes {
       onOpen: (path) => opts.open(path),
       onRename: (path) => opts.rename(path),
       onDelete: (path) => opts.moveToTrash(path),
-      onCreateIn: (dir) => opts.createIn(dir),
+      onCreateIn: (dir, kind) => opts.createIn(dir, kind),
+      onDropFiles: opts.dropFiles,
+      onMoveFile: opts.moveFile,
+      onFolderStateChanged: opts.onFolderStateChanged,
     });
     this.search = new SearchPane({
       search: (query) => opts.index()?.searchNotes(query) ?? Promise.resolve([]),
       snippet: (path, query) => opts.index()?.snippetFor(path, query) ?? Promise.resolve(''),
       onOpen: (path) => opts.open(path),
     });
-    this.tags = new TagPane({ onOpen: (path) => opts.open(path) });
+    this.tags = new TagPane({ onOpen: (path) => opts.open(path), onEdit: opts.editTags });
     this.unresolved = new UnresolvedPane({
       onCreate: (name) => opts.create(name),
       onOpen: (path, offset) => opts.open(path, offset),
@@ -83,12 +92,29 @@ export class SidebarPanes {
   /** ツリーに出すのは、開けるファイルとフォルダだけ。 */
   setEntries(entries: readonly Entry[], active: VPath | null): void {
     this.explorer.setEntries(entries.filter((e) => e.kind === 'dir' || isOpenable(e.path)));
-    this.explorer.setActive(active);
+    this.setActive(active);
   }
 
   setActive(path: VPath | null): void {
     this.explorer.setActive(path);
+    this.tags.setActive(path);
   }
+
+  revealImported(path: VPath): void {
+    this.explorer.revealImported(path);
+  }
+
+  revealCreated(path: VPath): void {
+    this.explorer.revealCreated(path);
+  }
+
+  pasteDestination(): VPath {
+    return this.explorer.pasteDestination();
+  }
+
+  expandedFolders(): VPath[] { return this.explorer.expandedFolders(); }
+
+  restoreExpandedFolders(paths: readonly VPath[]): void { this.explorer.restoreExpandedFolders(paths); }
 
   onIndexChanged(index: Indexer): void {
     this.unresolved.setGroups(index.unresolved());

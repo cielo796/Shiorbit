@@ -1,5 +1,7 @@
 import { MobileNav, type NavTarget } from './mobileNav';
 import { button, el } from './dom';
+import { bindFileDrop, isFileDrag, type FileDropHandler } from './fileDrop';
+import { bindSidebarResize } from './sidebarResize';
 
 export type WorkspaceTab = 'files' | 'search' | 'tags' | 'unresolved' | 'trash';
 
@@ -19,6 +21,7 @@ export interface WorkspaceChromeOptions {
   realFolder: boolean;
   onTab: (tab: WorkspaceTab) => void;
   onNew: () => void;
+  onDropFiles?: FileDropHandler;
   onSettings: () => void;
   onQuickSwitcher: () => void;
   onPalette: () => void;
@@ -26,6 +29,7 @@ export interface WorkspaceChromeOptions {
   onMobileNav: (target: NavTarget) => void;
   onToggleSidebar: () => void;
   onToggleRightbar: () => void;
+  onSidebarResize?: () => void;
 }
 
 /**
@@ -75,6 +79,9 @@ export interface WorkspaceChrome {
   isSidebarShown: () => boolean;
   setRightbarShown: (shown: boolean) => void;
   isRightbarShown: () => boolean;
+  setSidebarWidth: (width: number) => void;
+  getSidebarWidth: () => number;
+  destroy: () => void;
 }
 
 const TABS: Array<{ id: WorkspaceTab; label: string; title: string }> = [
@@ -93,15 +100,27 @@ const TABS: Array<{ id: WorkspaceTab; label: string; title: string }> = [
  */
 export function buildWorkspaceChrome(opts: WorkspaceChromeOptions): WorkspaceChrome {
   const workspace = el('div', 'workspace');
+  // 受け付けない場所へのファイルドロップでアプリが別ページに移動するのを防ぐ。
+  for (const eventName of ['dragover', 'drop'] as const) {
+    workspace.addEventListener(eventName, (event) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
+    });
+  }
 
   // --- 左サイドバー
   const sidebar = el('aside', 'sidebar');
   const head = el('div', 'sidebar-head');
+  if (opts.onDropFiles) bindFileDrop(head, opts.onDropFiles);
   const vaultName = el('div', 'vault-name', opts.vaultName);
   vaultName.title = opts.vaultName;
+  const createAtRoot = button('+', 'ghost', opts.onNew);
+  createAtRoot.title = `「${opts.vaultName}」の直下に新規作成`;
+  createAtRoot.setAttribute('aria-label', createAtRoot.title);
   head.append(
     vaultName,
-    button('+', 'ghost', opts.onNew),
+    createAtRoot,
     button('⚙', 'ghost', opts.onSettings),
   );
 
@@ -116,6 +135,7 @@ export function buildWorkspaceChrome(opts: WorkspaceChromeOptions): WorkspaceChr
 
   const paneHost = el('div', 'pane-host');
   sidebar.append(head, tabs, paneHost);
+  const sidebarResize = bindSidebarResize(workspace, sidebar, () => opts.onSidebarResize?.());
 
   // --- 中央
   const main = el('div', 'main');
@@ -173,6 +193,9 @@ export function buildWorkspaceChrome(opts: WorkspaceChromeOptions): WorkspaceChr
     statusbar,
     scrim,
     mobileNav,
+    setSidebarWidth: sidebarResize.setWidth,
+    getSidebarWidth: sidebarResize.getWidth,
+    destroy: sidebarResize.destroy,
 
     setPath: (path) => {
       title.textContent = path ?? 'ノートを選択してください';

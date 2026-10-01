@@ -54,11 +54,16 @@ export function askNewDocument(opts: NewDocumentDialogOptions): Promise<NewDocum
 
     const input = el('input', 'settings-input dialog-input');
     input.type = 'text';
-    input.placeholder = '例: AI/Ollama';
+    input.placeholder = '名前を入力（例: AI/Ollama）';
+    input.required = true;
+    input.autocomplete = 'off';
+    input.spellcheck = false;
     input.setAttribute('aria-label', '名前');
 
     const preview = el('div', 'dialog-preview');
+    preview.setAttribute('aria-live', 'polite');
     const error = el('div', 'dialog-error');
+    error.setAttribute('aria-live', 'polite');
 
     frame.body.append(
       kinds,
@@ -89,10 +94,14 @@ export function askNewDocument(opts: NewDocumentDialogOptions): Promise<NewDocum
       const reason = invalidNameReason(input.value);
       error.textContent = reason ?? '';
       const plan = reason === null ? resolveNewDocument(input.value, kind, opts.baseDir) : null;
+      input.setAttribute('aria-invalid', String(reason !== null));
       preview.textContent = plan === null
-        ? (opts.baseDir === '' ? 'Vault のルートに作成します。' : `${opts.baseDir}/ に作成します。`)
+        ? (opts.baseDir === ''
+          ? '名前を入力すると Vault のルートに作成します。'
+          : `名前を入力すると ${opts.baseDir}/ に作成します。`)
         : `作成先: ${plan.path}`;
       submit.disabled = plan === null;
+      submit.title = plan === null ? '名前を入力してください' : `${plan.path} を作成`;
     };
 
     input.addEventListener('input', () => refresh());

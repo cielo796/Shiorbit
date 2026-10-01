@@ -23,7 +23,7 @@ const EXTENSIONS: Record<Exclude<NewDocumentKind, 'folder'>, string> = {
 };
 
 /** Windows / macOS のどちらかで使えない文字。作成してから失敗するより先に弾く。 */
-const INVALID_CHARS = /[\:*?"<>|]/;
+const INVALID_CHARS = /[\\:*?"<>|]/;
 
 /**
  * 入力欄の文字列を、実際に作るパスへ翻訳する。

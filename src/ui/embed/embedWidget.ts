@@ -7,6 +7,8 @@ export type EmbedContent =
   | { kind: 'note'; path: string; text: string };
 
 export interface EmbedProvider {
+  /** 同じ参照文字列でも、ノートが変われば画像を解決し直す。 */
+  context?: () => string;
   /**
    * `![[target#subpath]]` の中身を解決する。
    *
@@ -24,16 +26,19 @@ export interface EmbedProvider {
  * 差し替え中に別のノートへ移っても困らないよう、DOM が生きているかを見てから触る。
  */
 export class EmbedWidget extends WidgetType {
+  private readonly context: string | undefined;
   constructor(
     private readonly target: string,
     private readonly subpath: string | undefined,
     private readonly provider: EmbedProvider,
   ) {
     super();
+    this.context = provider.context?.();
   }
 
   override eq(other: EmbedWidget): boolean {
-    return other.target === this.target && other.subpath === this.subpath;
+    return other.target === this.target && other.subpath === this.subpath
+      && other.context === this.context && other.provider === this.provider;
   }
 
   override toDOM(): HTMLElement {

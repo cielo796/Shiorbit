@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -26,6 +26,18 @@ runAdapterContract('NodeAdapter (実ファイルシステム)', {
 });
 
 describe('NodeAdapter — ディスク上の実体を確認する', () => {
+  it('1000ファイルの更新時刻を一覧で受け取り、ファイルごとのIPCを発生させない', async () => {
+    const bridge = await createNodeFsBridge();
+    bridge.readDir = vi.fn(async () => Array.from({ length: 1000 }, (_, i) => ({
+      name: `note${i}.md`, isDirectory: false, mtimeMs: 123, size: 42,
+    })));
+    bridge.stat = vi.fn();
+    const entries = await createNodeAdapter(bridge, 'C:\\fixture').list('', true, true);
+    expect(entries).toHaveLength(1000);
+    expect(entries[999]?.mtime).toBe(123);
+    expect(bridge.readDir).toHaveBeenCalledTimes(1);
+    expect(bridge.stat).not.toHaveBeenCalled();
+  });
   let dir = '';
 
   beforeEach(async () => {

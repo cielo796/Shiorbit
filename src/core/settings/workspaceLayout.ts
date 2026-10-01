@@ -16,6 +16,15 @@ export interface StoredLayout {
   sidebarShown: boolean;
   /** 右サイドバー（アウトライン・グラフ・リンク）を出しているか */
   rightbarShown: boolean;
+  /** 古い構成では未指定（260px）。 */
+  sidebarWidth?: number;
+  /** 未指定は全フォルダを閉じる。 */
+  expandedFolders?: VPath[];
+}
+
+export function normalizeSidebarWidth(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(200, Math.min(600, Math.round(value))) : 260;
 }
 
 export const LAYOUT_PATH = '.shiorbit/workspace.json';
@@ -48,7 +57,16 @@ export function normalizeLayout(input: unknown): StoredLayout {
     // 書かれていなければ「出す」。畳んだ覚えがないのに消えているほうが困る。
     sidebarShown: source['sidebarShown'] !== false,
     rightbarShown: source['rightbarShown'] !== false,
+    ...(source['sidebarWidth'] === undefined ? {} : { sidebarWidth: normalizeSidebarWidth(source['sidebarWidth']) }),
+    ...(source['expandedFolders'] === undefined ? {} : { expandedFolders: normalizeFolders(source['expandedFolders']) }),
   };
+}
+
+function normalizeFolders(input: unknown): VPath[] {
+  if (!Array.isArray(input)) return [];
+  return [...new Set(input.filter((path): path is string => typeof path === 'string'
+    && path.length > 0 && path.length <= 4096 && !/[\\:\u0000-\u001f]/.test(path)
+    && path.split('/').every(segment => segment !== '' && segment !== '.' && segment !== '..')))].slice(0, 10000);
 }
 
 function normalizePane(input: unknown): StoredPane | null {
@@ -84,5 +102,7 @@ export function parseLayout(text: string): StoredLayout {
 export function isEmptyLayout(layout: StoredLayout): boolean {
   return layout.panes.every((pane) => pane.tabs.length === 0)
     && layout.sidebarShown
-    && layout.rightbarShown;
+    && layout.rightbarShown
+    && normalizeSidebarWidth(layout.sidebarWidth) === 260
+    && (layout.expandedFolders?.length ?? 0) === 0;
 }

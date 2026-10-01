@@ -20,6 +20,8 @@ export class RightPane {
   private readonly outline: OutlinePane;
   private readonly localGraph: LocalGraphPane;
   private readonly backlinks: BacklinksPane;
+  private lastIndex: Indexer | null = null;
+  private lastPath: VPath | null = null;
 
   constructor(opts: RightPaneOptions) {
     this.outline = new OutlinePane({ onReveal: opts.onReveal });
@@ -33,7 +35,10 @@ export class RightPane {
     this.dom.append(this.outline.dom, this.localGraph.dom, this.backlinks.dom);
   }
 
-  update(index: Indexer, path: VPath | null): void {
+  update(index: Indexer, path: VPath | null, indexChanged = false): void {
+    if (!indexChanged && this.lastIndex === index && this.lastPath === path) return;
+    this.lastIndex = index;
+    this.lastPath = path;
     this.localGraph.update(index.graphInput());
     this.outline.setHeadings(path ? (index.getMeta(path)?.headings ?? []) : []);
     if (path) this.backlinks.setNote(path, index.backlinks(path), index.outgoing(path));

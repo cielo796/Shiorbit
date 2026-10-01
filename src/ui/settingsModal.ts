@@ -21,6 +21,7 @@ export interface SettingsModalOptions {
  */
 export class SettingsModal {
   private overlay: HTMLElement | null = null;
+  private saving = false;
 
   constructor(private readonly opts: SettingsModalOptions) {}
 
@@ -41,6 +42,11 @@ export class SettingsModal {
     const body = el('div', 'settings-body');
 
     body.append(
+      section('起動時'),
+      toggle('前回のタブを復元', 'OFFにすると次回起動時はタブを開かずに開始します。現在のタブは閉じません。',
+        data.restoreTabsOnStartup, (v) => apply({ restoreTabsOnStartup: v })),
+      toggle('フォルダの開閉状態を復元', 'OFFにすると次回起動時はすべてのフォルダを閉じて開始します。',
+        data.restoreFoldersOnStartup, (v) => apply({ restoreFoldersOnStartup: v })),
       section('表示'),
       choice('テーマ', data.theme, [['dark', 'ダーク'], ['light', 'ライト']], (v) => {
         apply({ theme: v as SettingsData['theme'] });
@@ -78,6 +84,11 @@ export class SettingsModal {
         hint: '他のアプリや同期による変更を拾う間隔。',
       }, (v) => apply({ pollInterval: v })),
 
+      section('タグ'),
+      toggle('タグの自動収集',
+        '本文の #タグ を自動でタグ一覧に追加します。OFFでも手動設定したタグ（frontmatter の tags / tag）は残ります。ノートの内容は変更しません。',
+        data.autoCollectTags, (v) => apply({ autoCollectTags: v })),
+
       section('ノートの置き場所'),
       text('Daily Notes のフォルダ', data.dailyFolder, (v) => apply({ dailyFolder: v })),
       text('Daily Notes の日付書式', data.dailyFormat,
@@ -102,14 +113,29 @@ export class SettingsModal {
       ));
     }
 
+    const saveError = el('div', 'dialog-error');
+    saveError.setAttribute('role', 'alert');
+    body.append(saveError);
+    const save = async (): Promise<void> => {
+      if (this.saving) return;
+      this.saving = true;
+      const controls = [...overlay.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>('input, button, select')];
+      for (const control of controls) control.disabled = true;
+      try {
+        await this.opts.save(patch);
+        overlay.remove();
+        this.overlay = null;
+      } catch (e) {
+        saveError.textContent = `設定を保存できませんでした: ${e instanceof Error ? e.message : String(e)}`;
+      } finally {
+        this.saving = false;
+        for (const control of controls) control.disabled = false;
+      }
+    };
     const footer = el('div', 'settings-footer');
     footer.append(
       button('閉じる', undefined, () => this.close()),
-      button('保存', 'primary', () => {
-        void this.opts.save(patch);
-        this.overlay?.remove();
-        this.overlay = null;
-      }),
+      button('保存', 'primary', () => { void save(); }),
     );
 
     modal.append(body, footer);
@@ -130,7 +156,7 @@ export class SettingsModal {
 
   /** 閉じるときは、保存していない変更（プレビュー）を必ず捨てる。 */
   close(): void {
-    if (!this.overlay) return;
+    if (!this.overlay || this.saving) return;
     this.overlay.remove();
     this.overlay = null;
     this.opts.discardPreview?.();
@@ -153,6 +179,7 @@ function field(label: string, hint: string | undefined, control: HTMLElement): H
 function toggle(label: string, hint: string, value: boolean, onChange: (v: boolean) => void): HTMLElement {
   const input = el('input', 'settings-checkbox');
   input.type = 'checkbox';
+  input.setAttribute('aria-label', label);
   input.checked = value;
   input.addEventListener('change', () => onChange(input.checked));
   return field(label, hint || undefined, input);

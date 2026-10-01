@@ -38,7 +38,54 @@ function sourceWithDemo(adapter: MemoryAdapter): VaultSource {
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
+function internalMove(source: Element, target: Element): void {
+  const data = new Map<string, string>();
+  const transfer = {
+    types: [] as string[],
+    dropEffect: 'none',
+    effectAllowed: 'none',
+    setData(type: string, value: string) {
+      data.set(type, value);
+      transfer.types = [...data.keys()];
+    },
+    getData(type: string) {
+      return data.get(type) ?? '';
+    },
+  };
+  for (const [element, type] of [[source, 'dragstart'], [target, 'dragover'], [target, 'drop']] as const) {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    element.dispatchEvent(event);
+  }
+}
+
 describe('App の起動', () => {
+  it('フォルダ開閉を保存し、再起動相当の新しいAppでも親子の状態を復元する', async () => {
+    const adapter = new MemoryAdapter('Folder state');
+    await adapter.mkdir('A/Child');
+    await adapter.mkdir('B');
+    const vaultSource = { ...source(), restore: async () => adapter };
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, vaultSource).start();
+    const row = (host: Element, path: string) => host.querySelector<HTMLElement>(`.row[data-path="${path}"]`)!;
+    expect(row(root, 'A').getAttribute('aria-expanded')).toBe('false');
+    row(root, 'A').click();
+    row(root, 'A/Child').click();
+    row(root, 'A').click();
+    for (let i = 0; i < 20; i++) await tick();
+    const saved = JSON.parse(await adapter.read('.shiorbit/workspace.json'));
+    expect(saved.expandedFolders).toEqual(['A/Child']);
+    await adapter.mkdir('New');
+    const reopened = document.createElement('div');
+    document.body.append(reopened);
+    await new App(reopened, vaultSource).start();
+    expect(row(reopened, 'A').getAttribute('aria-expanded')).toBe('false');
+    expect(row(reopened, 'B').getAttribute('aria-expanded')).toBe('false');
+    expect(row(reopened, 'New').getAttribute('aria-expanded')).toBe('false');
+    row(reopened, 'A').click();
+    expect(row(reopened, 'A/Child').getAttribute('aria-expanded')).toBe('true');
+  });
   it('ウェルカム画面を描画する', async () => {
     const root = document.createElement('div');
     document.body.append(root);
@@ -157,6 +204,36 @@ describe('App の起動', () => {
     sourceMode.click();
     expect(editorShell.style.display).toBe('');
     expect(root.querySelector('.cm-content')?.textContent).toContain('<h1>Preview</h1>');
+    expect(root.querySelector<HTMLElement>('.md-toolbar')?.dataset.language).toBe('html');
+    expect(root.querySelector('.md-toolbar')?.textContent).not.toContain('[[');
+  });
+
+  it('HTMLプレビューで文書からの相対画像をVaultから読み込む', async () => {
+    const adapter = new MemoryAdapter('HTML image');
+    await adapter.write('web/page.html', '<h1>画像</h1><img src="images/photo.png" alt="写真">');
+    await adapter.writeBinary('web/images/photo.png', new Uint8Array([1, 2, 3]).buffer);
+    const originalCreate = URL.createObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:shiorbit/photo');
+
+    try {
+      const root = document.createElement('div');
+      document.body.append(root);
+      await new App(root, sourceWithDemo(adapter)).start();
+      [...root.querySelectorAll('button')].find((button) => button.textContent?.includes('デモモード'))!.click();
+      for (let i = 0; i < 10; i++) await tick();
+
+      const row = [...root.querySelectorAll('.tree .row .label')]
+        .find((node) => node.textContent === 'page.html');
+      (row!.parentElement as HTMLElement).click();
+      for (let i = 0; i < 10; i++) await tick();
+
+      const preview = root.querySelector<HTMLIFrameElement>('.html-preview')!;
+      const previewHtml = decodeURIComponent(preview.src.slice(preview.src.indexOf(',') + 1));
+      expect(previewHtml).toContain('src="blob:shiorbit/photo"');
+      expect(URL.createObjectURL).toHaveBeenCalledOnce();
+    } finally {
+      URL.createObjectURL = originalCreate;
+    }
   });
 
   it('ファイルツリーをMarkdown・HTML・両方で切り替えられる', async () => {
@@ -248,7 +325,7 @@ describe('App の起動', () => {
     confirm.mockRestore();
   });
 
-  it('ノート名の変更前に影響範囲を表示し、リンクを追従させる', async () => {
+  it('ノート名を確認画面なしで変更し、リンクを追従させる', async () => {
     const adapter = new MemoryAdapter('Rename UI');
     await adapter.write('AI/Ollama.md', '# Ollama');
     await adapter.write('AI/Guide.md', '[[Ollama]] と [[AI/Ollama|別名]]');
@@ -266,25 +343,49 @@ describe('App の起動', () => {
 
     const promptModal = document.querySelector('.prompt-dialog')!;
     const nameInput = promptModal.querySelector<HTMLInputElement>('.dialog-input')!;
-    expect(nameInput.value).toBe('AI/Ollama.md');
-    nameInput.value = 'AI/Llama.md';
+    expect(nameInput.value).toBe('Ollama.md');
+    expect(promptModal.textContent).toContain('現在のフォルダ内で名前だけ変更します');
+    nameInput.value = '別フォルダ/Llama.md';
+    nameInput.dispatchEvent(new Event('input'));
+    expect(promptModal.textContent).toContain('フォルダは変更できません');
+    expect([...promptModal.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === '変更')!.disabled).toBe(true);
+
+    nameInput.value = 'Llama.md';
     nameInput.dispatchEvent(new Event('input'));
     [...promptModal.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent === '次へ')!.click();
-    for (let i = 0; i < 5; i++) await tick();
-
-    expect(prompt).not.toHaveBeenCalled();
-    const modal = document.querySelector('.rename-modal')!;
-    expect(modal.textContent).toContain('1 件のノートの 2 か所を書き換えます');
-    expect(modal.textContent).toContain('AI/Guide.md');
-    [...modal.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent === '変更する')!.click();
+      .find((button) => button.textContent === '変更')!.click();
     for (let i = 0; i < 10; i++) await tick();
 
+    expect(prompt).not.toHaveBeenCalled();
+    expect(document.querySelector('.rename-modal')).toBeNull();
     expect(await adapter.exists('AI/Ollama.md')).toBe(false);
     expect(await adapter.read('AI/Guide.md')).toBe('[[Llama]] と [[AI/Llama|別名]]');
     expect(root.textContent).toContain('Llama');
     prompt.mockRestore();
+  });
+
+  it('ツリー内のドラッグで既存ノートを移動し、リンクを追従させる', async () => {
+    const adapter = new MemoryAdapter('Move UI');
+    await adapter.write('AI/Ollama.md', '# Ollama');
+    await adapter.write('AI/Guide.md', '[[Ollama]] と [[AI/Ollama|別名]]');
+    await adapter.mkdir('Archive');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((button) => button.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    const row = (path: string): HTMLElement => [...root.querySelectorAll<HTMLElement>('.tree .row')]
+      .find((element) => element.dataset['path'] === path)!;
+    internalMove(row('AI/Ollama.md'), row('Archive').querySelector('.label')!);
+    for (let i = 0; i < 12; i++) await tick();
+
+    expect(await adapter.exists('AI/Ollama.md')).toBe(false);
+    expect(await adapter.exists('Archive/Ollama.md')).toBe(true);
+    expect(await adapter.read('AI/Guide.md')).toBe('[[Ollama]] と [[Archive/Ollama|別名]]');
+    expect(row('Archive/Ollama.md')).toBeDefined();
+    expect(document.querySelector('.rename-modal')).toBeNull();
   });
 
   it('未解決タブにまだ書いていないノートが並ぶ', async () => {
@@ -468,6 +569,51 @@ describe('App の起動', () => {
     for (let i = 0; i < 4; i++) await tick();
     expect(workspace.classList.contains('drawer-open')).toBe(false);
   });
+  it.each([
+    ['Markdown', 'New', 'New.md'],
+    ['HTML', 'New', 'New.html'],
+    ['Base', 'New', 'New.base'],
+    ['Canvas', 'New', 'New.canvas'],
+    ['フォルダ', 'New', 'New'],
+    ['Markdown', 'test/作業メモ', 'test/作業メモ.md'],
+  ])('左上の＋は別フォルダのノートを開いていてもルートに作る（%s: %s）', async (kind, name, filename) => {
+    const adapter = new MemoryAdapter('Root creation UI');
+    await adapter.write('Other/Nested/Current.md', '# Current');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    root.querySelector<HTMLElement>('.row[data-path="Other/Nested/Current.md"]')!.click();
+    for (let i = 0; i < 10; i++) await tick();
+    expect(root.querySelector('.main-title')?.textContent).toBe('Other/Nested/Current.md');
+    const createAtRoot = [...root.querySelectorAll<HTMLButtonElement>('.sidebar-head button')]
+      .find((b) => b.textContent === '+')!;
+    expect(createAtRoot.title).toBe('「Root creation UI」の直下に新規作成');
+    expect(createAtRoot.getAttribute('aria-label')).toBe(createAtRoot.title);
+    createAtRoot.click();
+
+    const dialog = document.querySelector('.new-document-dialog')!;
+    expect(dialog.querySelector('.dialog-preview')?.textContent)
+      .toBe('名前を入力すると Vault のルートに作成します。');
+    [...dialog.querySelectorAll<HTMLButtonElement>('.dialog-kind')]
+      .find((b) => b.textContent === kind)!.click();
+    const input = dialog.querySelector<HTMLInputElement>('.dialog-input')!;
+    input.value = name;
+    input.dispatchEvent(new Event('input'));
+    expect(dialog.querySelector('.dialog-preview')?.textContent).toBe(`作成先: ${filename}`);
+    dialog.querySelector<HTMLButtonElement>('.primary')!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    expect(await adapter.exists(filename)).toBe(true);
+    expect(await adapter.exists(`Other/Nested/${filename}`)).toBe(false);
+    expect(await adapter.read('Other/Nested/Current.md')).toBe('# Current');
+    expect(root.querySelector(`.row[data-path="${filename}"]`)).not.toBeNull();
+    expect(document.querySelector('.new-document-dialog')).toBeNull();
+    if (kind !== 'フォルダ') expect(root.querySelector('.main-title')?.textContent).toBe(filename);
+  });
+
   it('新規作成ダイアログで HTML とフォルダを作れる', async () => {
     const adapter = new MemoryAdapter('New UI');
     await adapter.write('AI/Ollama.md', '# Ollama');
@@ -486,11 +632,17 @@ describe('App の起動', () => {
 
     const dialog = document.querySelector('.new-document-dialog')!;
     const input = dialog.querySelector<HTMLInputElement>('.dialog-input')!;
+    const submit = dialog.querySelector<HTMLButtonElement>('.primary')!;
+    expect(input.required).toBe(true);
+    expect(submit.disabled).toBe(true);
+    expect(submit.title).toBe('名前を入力してください');
     [...dialog.querySelectorAll<HTMLButtonElement>('.dialog-kind')]
       .find((b) => b.textContent === 'HTML')!.click();
     input.value = 'Guide';
     input.dispatchEvent(new Event('input'));
     expect(dialog.querySelector('.dialog-preview')?.textContent).toBe('作成先: Guide.html');
+    expect(submit.disabled).toBe(false);
+    expect(submit.title).toBe('Guide.html を作成');
 
     [...dialog.querySelectorAll<HTMLButtonElement>('button')]
       .find((b) => b.textContent === '作成')!.click();
@@ -520,6 +672,68 @@ describe('App の起動', () => {
     expect([...root.querySelectorAll('.tree .label')].some((l) => l.textContent === 'LLM')).toBe(true);
     prompt.mockRestore();
   });
+  it.each([
+    ['Markdownを新規作成…', 'Markdown', 'New.md'],
+    ['HTMLを新規作成…', 'HTML', 'New.html'],
+    ['サブフォルダを作成…', 'フォルダ', 'New'],
+  ])('フォルダの右クリックから %s を正しい作成先で実行する', async (label, kind, filename) => {
+    const adapter = new MemoryAdapter('Folder menu UI');
+    await adapter.write('Other/Current.md', '# Current');
+    await adapter.mkdir('Projects/Notes');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+
+    root.querySelector<HTMLElement>('.row[data-path="Other/Current.md"]')!.click();
+    for (let i = 0; i < 8; i++) await tick();
+    root.querySelector('.row[data-path="Projects/Notes"]')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    [...document.querySelectorAll<HTMLButtonElement>('.context-menu-item')]
+      .find((button) => button.textContent === label)!.click();
+    await tick();
+
+    const dialog = document.querySelector('.new-document-dialog')!;
+    expect(dialog.querySelector('.dialog-kind.active')?.textContent).toBe(kind);
+    const input = dialog.querySelector<HTMLInputElement>('.dialog-input')!;
+    input.value = 'New';
+    input.dispatchEvent(new Event('input'));
+    expect(dialog.querySelector('.dialog-preview')?.textContent).toBe(`作成先: Projects/Notes/${filename}`);
+    dialog.querySelector<HTMLButtonElement>('.primary')!.click();
+    for (let i = 0; i < 12; i++) await tick();
+
+    expect(await adapter.exists(`Projects/Notes/${filename}`)).toBe(true);
+    expect(await adapter.exists(`Other/${filename}`)).toBe(false);
+    if (kind === 'HTML') expect(await adapter.read(`Projects/Notes/${filename}`)).toContain('<!doctype html>');
+    if (kind === 'Markdown') expect(await adapter.read(`Projects/Notes/${filename}`)).toBe('# New\n\n');
+    expect(root.querySelector(`.row[data-path="Projects/Notes/${filename}"]`)).not.toBeNull();
+    expect(document.querySelector('.context-menu')).toBeNull();
+  });
+
+  it('フォルダの右クリックからごみ箱を選んでも確認をキャンセルすれば何も消さない', async () => {
+    const adapter = new MemoryAdapter('Folder trash UI');
+    await adapter.write('Notes/Keep.md', '# Keep');
+    const root = document.createElement('div');
+    document.body.append(root);
+    await new App(root, sourceWithDemo(adapter)).start();
+    [...root.querySelectorAll('button')].find((b) => b.textContent?.includes('デモモード'))!.click();
+    for (let i = 0; i < 10; i++) await tick();
+    root.querySelector('.row[data-path="Notes"]')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    [...document.querySelectorAll<HTMLButtonElement>('.context-menu-item')]
+      .find((button) => button.textContent === 'ごみ箱へ移す…')!.click();
+    await tick();
+    const dialog = document.querySelector('.dialog')!;
+    expect(dialog.textContent).toContain('「Notes」をごみ箱へ移します');
+    expect(await adapter.read('Notes/Keep.md')).toBe('# Keep');
+    [...dialog.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'キャンセル')!.click();
+    for (let i = 0; i < 3; i++) await tick();
+    expect(await adapter.read('Notes/Keep.md')).toBe('# Keep');
+    expect(await adapter.exists('.trash')).toBe(false);
+  });
+
   it('Ctrl と +／0 で表示倍率が変わり、設定に残る', async () => {
     const adapter = new MemoryAdapter('Zoom UI');
     await adapter.write('note.md', '# note');
@@ -820,7 +1034,16 @@ describe('App の起動', () => {
     expect(root.querySelector('.main-title')?.textContent).toBe('a.md');
 
     // ✕ で閉じると、残ったタブへ移る。1枚になったので帯はまた消える。
-    root.querySelector<HTMLButtonElement>('.tab-item.active .tab-close')!.click();
+    const close = root.querySelector<HTMLButtonElement>('.tab-item.active .tab-close')!;
+    close.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    close.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+    close.focus();
+    // 実操作では押してから離すまでに非同期の更新が入る。
+    for (let i = 0; i < 10; i++) await tick();
+    expect(root.querySelector('.tab-item.active .tab-close')).toBe(close);
+    expect(tabs()).toEqual(['a', 'b']);
+    close.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+    close.click();
     for (let i = 0; i < 12; i++) await tick();
     expect(tabs()).toEqual(['b']);
     expect(root.querySelector<HTMLElement>('.tab-strip')?.style.display).toBe('none');

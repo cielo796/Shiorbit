@@ -7,6 +7,12 @@ export interface SettingsData {
   /** 記法を隠して見た目を整える (設計書 §7) */
   livePreview: boolean;
   showLineNumbers: boolean;
+  /** 本文の #タグ をタグとして扱う。明示した frontmatter のタグは常に有効。 */
+  autoCollectTags: boolean;
+  /** 起動時に前回のタブ・分割を復元する。保存自体は常に行う。 */
+  restoreTabsOnStartup: boolean;
+  /** 起動時に前回のフォルダ開閉状態を復元する。OFFならすべて閉じる。 */
+  restoreFoldersOnStartup: boolean;
   /** Daily Notes の置き場所と日付書式 */
   dailyFolder: string;
   dailyFormat: string;
@@ -38,6 +44,9 @@ export const DEFAULT_SETTINGS: SettingsData = {
   theme: 'dark',
   livePreview: true,
   showLineNumbers: true,
+  autoCollectTags: true,
+  restoreTabsOnStartup: true,
+  restoreFoldersOnStartup: true,
   dailyFolder: 'Daily',
   dailyFormat: 'YYYY-MM-DD',
   dailyTemplate: '',
@@ -64,6 +73,8 @@ export class Settings {
   private current: SettingsData = { ...DEFAULT_SETTINGS };
   /** 保存済みの値。preview 中でもここは動かさない。 */
   private saved: SettingsData = { ...DEFAULT_SETTINGS };
+  private pendingUpdate: SettingsData | null = null;
+  private writeQueue: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(data: SettingsData) => void>();
 
   constructor(private readonly vault: VaultService) {}
@@ -103,10 +114,25 @@ export class Settings {
 
   /** preview 中でも保存済みの値を土台にする（試しただけの値を書き込まないため）。 */
   async update(patch: Partial<SettingsData>): Promise<void> {
-    this.current = normalize({ ...this.saved, ...patch });
-    this.saved = this.current;
+    const next = normalize({ ...(this.pendingUpdate ?? this.saved), ...patch });
+    this.pendingUpdate = next;
+    this.current = next;
     this.emit();
-    await this.save();
+    // スマホ等で保存が遅くても表示は即時更新し、連続操作の書き込み順を守る。
+    const writing = this.writeQueue.then(() => this.save(next));
+    this.writeQueue = writing.catch(() => undefined);
+    try {
+      await writing;
+      this.saved = next;
+    } catch (e) {
+      if (this.current === next) {
+        this.current = this.saved;
+        this.emit();
+      }
+      throw e;
+    } finally {
+      if (this.pendingUpdate === next) this.pendingUpdate = null;
+    }
   }
 
   /**
@@ -125,13 +151,13 @@ export class Settings {
     this.emit();
   }
 
-  async save(): Promise<void> {
+  async save(data: SettingsData = this.current): Promise<void> {
     try {
       await this.vault.mkdir(SETTINGS_DIR);
     } catch {
       /* すでにあれば無視 */
     }
-    await this.vault.writeNote(SETTINGS_PATH, `${JSON.stringify(this.current, null, 2)}\n`);
+    await this.vault.writeNote(SETTINGS_PATH, `${JSON.stringify(data, null, 2)}\n`);
   }
 
   /** 旧版の設定を読み、新しい保存先へコピーする。旧ファイルは安全のため残す。 */
@@ -171,6 +197,12 @@ export function normalize(input: unknown): SettingsData {
     livePreview: typeof src['livePreview'] === 'boolean' ? src['livePreview'] : DEFAULT_SETTINGS.livePreview,
     showLineNumbers:
       typeof src['showLineNumbers'] === 'boolean' ? src['showLineNumbers'] : DEFAULT_SETTINGS.showLineNumbers,
+    autoCollectTags:
+      typeof src['autoCollectTags'] === 'boolean' ? src['autoCollectTags'] : DEFAULT_SETTINGS.autoCollectTags,
+    restoreTabsOnStartup:
+      typeof src['restoreTabsOnStartup'] === 'boolean' ? src['restoreTabsOnStartup'] : DEFAULT_SETTINGS.restoreTabsOnStartup,
+    restoreFoldersOnStartup:
+      typeof src['restoreFoldersOnStartup'] === 'boolean' ? src['restoreFoldersOnStartup'] : DEFAULT_SETTINGS.restoreFoldersOnStartup,
     dailyFolder: str('dailyFolder', DEFAULT_SETTINGS.dailyFolder),
     dailyFormat: str('dailyFormat', DEFAULT_SETTINGS.dailyFormat),
     dailyTemplate: typeof src['dailyTemplate'] === 'string' ? src['dailyTemplate'] : '',

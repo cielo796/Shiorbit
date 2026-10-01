@@ -1,4 +1,5 @@
 import { StateEffect, type EditorState } from '@codemirror/state';
+import { syntaxTree } from '@codemirror/language';
 import type { ViewUpdate } from '@codemirror/view';
 
 /**
@@ -12,7 +13,18 @@ export function wasNudged(update: ViewUpdate): boolean {
 }
 
 export function shouldRecompute(update: ViewUpdate): boolean {
-  return update.docChanged || update.viewportChanged || update.selectionSet || wasNudged(update);
+  if (update.docChanged || update.viewportChanged || wasNudged(update)
+    || syntaxTree(update.startState) !== syntaxTree(update.state)) return true;
+  if (!update.selectionSet) return false;
+  const before = update.startState.selection.ranges;
+  const after = update.state.selection.ranges;
+  // 同じ行内のクリックや選択移動で、可視範囲の装飾を全部作り直さない。
+  return before.length !== after.length || after.some((range, i) => {
+    const old = before[i]!;
+    const doc = update.state.doc;
+    return doc.lineAt(old.from).number !== doc.lineAt(range.from).number
+      || doc.lineAt(old.to).number !== doc.lineAt(range.to).number;
+  });
 }
 
 /**

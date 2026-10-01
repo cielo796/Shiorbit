@@ -5,6 +5,7 @@ import { basename, dirname, normalize } from '../../core/vault/path';
 import type { Entry, VPath } from '../../core/vault/types';
 import { AttachmentUrlCache, isEmbeddableImage } from './attachmentUrl';
 import type { EmbedContent, EmbedProvider } from './embedWidget';
+import { externalImageSource, localImagePath } from './imageSource';
 
 export interface EmbedResolverOptions {
   vault: VaultService;
@@ -54,23 +55,34 @@ export class EmbedResolver implements EmbedProvider {
     }
   }
 
-  async resolve(target: string, subpath?: string): Promise<EmbedContent | null> {
+  async resolve(target: string, subpath?: string, fromPath = this.opts.currentPath() ?? ''): Promise<EmbedContent | null> {
     if (isEmbeddableImage(target)) {
-      const path = this.findAttachment(target);
+      const path = this.findAttachment(target, fromPath);
       if (path === null) return null;
       const url = await this.urls.get(path);
       return url === null ? null : { kind: 'image', url, alt: basename(path) };
     }
 
-    const path = this.opts.index()?.resolve(target, this.opts.currentPath() ?? '') ?? null;
+    const path = this.opts.index()?.resolve(target, fromPath) ?? null;
     if (path === null) return null;
-    const text = await this.readSection(target, subpath);
+    const text = await this.readSection(target, subpath, this.opts.limit ?? 1200, fromPath);
     return text === null ? null : { kind: 'note', path, text };
   }
 
+  /** 通常の ![説明](URL)。Wiki画像と違い、別フォルダの同名画像には補完しない。 */
+  async resolveImage(target: string, fromPath: VPath): Promise<string | null> {
+    const external = externalImageSource(target);
+    if (external !== null) return external;
+    const path = localImagePath(target, fromPath);
+    if (path === null || !isEmbeddableImage(path)) return null;
+    const actual = this.attachments.get(path.toLowerCase());
+    return actual === undefined || actual.toLowerCase() !== path.toLowerCase() ? null : this.urls.get(actual);
+  }
+
   /** ノートの本文（または節）の抜粋。Canvas の file ノードもこれを使う。 */
-  async readSection(target: string, subpath?: string, limit = this.opts.limit ?? 1200): Promise<string | null> {
-    const path = this.opts.index()?.resolve(target, this.opts.currentPath() ?? '') ?? null;
+  async readSection(target: string, subpath?: string, limit = this.opts.limit ?? 1200,
+    fromPath = this.opts.currentPath() ?? ''): Promise<string | null> {
+    const path = this.opts.index()?.resolve(target, fromPath) ?? null;
     if (path === null) return null;
 
     try {
@@ -83,9 +95,8 @@ export class EmbedResolver implements EmbedProvider {
   }
 
   /** 開いているノートからの相対 → Vault ルート → ファイル名、の順に探す。 */
-  private findAttachment(target: string): VPath | null {
-    const current = this.opts.currentPath();
-    const dir = current ? dirname(current) : '';
+  private findAttachment(target: string, fromPath: VPath): VPath | null {
+    const dir = dirname(fromPath);
     const candidates = [
       dir === '' ? '' : normalize(`${dir}/${target}`),
       normalize(target),

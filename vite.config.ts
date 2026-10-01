@@ -13,7 +13,7 @@ const DEV_CSP = [
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "worker-src 'self' blob:",
-  'frame-src data:',
+  'frame-src blob: data:',
   "connect-src 'self' blob: data: ws: wss:",
   "object-src 'none'",
   "base-uri 'self'",

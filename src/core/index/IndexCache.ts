@@ -2,8 +2,8 @@ import type { NoteMeta } from '../markdown/scan';
 import type { LinkRef } from '../markdown/wikilink';
 
 /** 形式を変えたらここを上げる。古いキャッシュは自動的に捨てられる。 */
-// 3: HTML からのリンクを持つようになった（2 のキャッシュは links: [] のままなので捨てる）
-export const CACHE_VERSION = 3;
+// 5: 検索対象から埋め込み画像データとHTMLの非本文を除外。旧索引は再構築する。
+export const CACHE_VERSION = 5;
 
 export interface CachedLink {
   ref: LinkRef;
